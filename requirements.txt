@@ -1,0 +1,7 @@
+lightgbm==4.6.0
+pandas>=2.2,<3
+numpy
+scikit-learn
+statsmodels
+openpyxl
+requests

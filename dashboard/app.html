@@ -228,7 +228,7 @@ td.n { text-align: right; white-space: nowrap; }
 .foot { color: var(--muted); font-size: 12px; }
 
 @media (max-width: 860px) {
-  .app { grid-template-columns: minmax(0, 1fr); }
+  .app { grid-template-columns: minmax(0, 1fr); align-content: start; }
   .side { position: sticky; top: 0; z-index: 6; height: auto; flex-direction: row; align-items: center; overflow-x: auto; overflow-y: hidden;
     padding: 8px max(10px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px)); gap: 6px; }
   .brand, .menu-h, .side-sp, .side-legend { display: none; }
@@ -238,6 +238,58 @@ td.n { text-align: right; white-space: nowrap; }
   .nav a .s { display: none; }
   .side-test { border-top: 0; border-left: 1px solid var(--side-line); padding: 0 0 0 6px; }
   .top { position: static; }
+}
+/* 휴대폰: 입력칸 16px(아이폰 확대 방지), 권리·임차인 표는 줄마다 카드로 */
+@media (max-width: 860px) {
+  .f input, .f select, td input, td select, textarea, .filters input, #manualPrice { font-size: 16px; }
+  .f input, .f select { height: 44px; }
+  .btn { padding: 9px 14px; }
+  .btn.sm { padding: 7px 11px; }
+}
+@media (max-width: 640px) {
+  .view { padding: 16px 16px 32px; gap: 14px; }
+  .top { padding: 8px 16px; gap: 8px; }
+  .top .row-actions { width: 100%; }
+  .top .row-actions > * { flex: 1; text-align: center; }
+  .case-id b { max-width: 100%; }
+  .live { gap: 12px; }
+  .vh h1 { font-size: 19px; }
+  .box { padding: 14px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .drop { padding: 12px 14px; }
+  .drop .tx { min-width: 0; }
+  .drop .row-actions { width: 100%; }
+  .drop .row-actions > * { flex: 1; text-align: center; }
+  .modes { grid-template-columns: minmax(0, 1fr); }
+  .kpi b { font-size: 18px; }
+  .pnums b { font-size: 15px; }
+  .stepnav { position: sticky; bottom: 0; z-index: 3; background: var(--bg); margin: 0 -16px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); }
+  .stepnav > * { flex: 1; text-align: center; }
+  .stepnav > span:empty { display: none; }
+
+  .tbl-wrap:has(> table.ed) { border: 0; overflow: visible; }
+  table.ed, .ed tbody { display: block; }
+  .ed thead { display: none; }
+  .ed tr[data-i] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; position: relative;
+    margin-top: 10px; padding: 12px 12px 10px; border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; background: var(--surface); }
+  .ed tr[data-i] td { display: grid; gap: 3px; padding: 0; min-width: 0; border: 0; }
+  .ed tr[data-i] td::before { content: attr(data-label); font-size: 12px; color: var(--muted); font-weight: 500; }
+  .ed tr[data-i] td.w-del::before { content: none; }
+  .ed .w-type, .ed .w-who, .ed .w-name, .ed .w-date, .ed .w-amt, .ed .w-s { min-width: 0; }
+  .ed .w-name, .ed .w-amt { grid-column: 1 / -1; }
+  #tenTbl .w-amt { grid-column: auto; }
+  .ed .w-s { text-align: left; }
+  .ed .w-s input[type="checkbox"] { width: 22px; height: 22px; margin: 6px 0 0; }
+  .ed td input, .ed td select { height: 44px; }
+  .ed td.w-del { position: absolute; top: 2px; right: 2px; }
+  .ed td.w-del .x { font-size: 20px; padding: 2px 9px; line-height: 1.2; }
+  .ed tr.rh { display: block; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; background: var(--surface); }
+  .ed tr.rh td { display: block; padding: 0 12px 10px; border: 0; }
+  .ed tr.rh td:empty { padding: 0 0 2px; }
+  .ed tr:not([data-i]):not(.rh) { display: block; }
+  .ed tr:not([data-i]):not(.rh) td { display: block; border: 1px dashed var(--line); border-radius: 10px; }
+  .ed tr.off { opacity: 0.6; }
+  .ed tr.off td { opacity: 1; }
 }
 /* 인쇄·PDF 저장: 메뉴와 버튼은 빼고 지금 보는 단계만 문서처럼 */
 @media print {
@@ -613,14 +665,14 @@ function fillSgg() {
 function renderRights() {
   $("#rightsTbl tbody").innerHTML = state.rights.map((r, i) => `
     <tr class="${r.valid === false ? "off" : ""}" data-i="${i}">
-      <td class="w-type"><select data-r="type" aria-label="등기목적">${RIGHT_TYPES.map((t) => `<option${t === r.type ? " selected" : ""}>${t}</option>`).join("")}</select></td>
-      <td class="w-who"><select data-r="who" aria-label="권리자 유형">${WHO.map((t) => `<option${t === r.who ? " selected" : ""}>${t}</option>`).join("")}</select></td>
-      <td class="w-name"><input data-r="name" aria-label="권리자" value="${esc(r.name)}" placeholder="예: OO은행"></td>
-      <td class="w-date"><input data-r="date" type="date" aria-label="접수일" value="${esc(r.date || "")}"></td>
-      <td class="w-amt"><input data-r="amount" data-money inputmode="decimal" aria-label="금액" value="${comma(r.amount)}" placeholder="모르면 비움"></td>
-      <td class="w-who"><select data-r="book" aria-label="등기부">${["", "토지", "건물", "토지·건물"].map((b) => `<option value="${b}"${b === bookOf(r) ? " selected" : ""}>${b || "모름"}</option>`).join("")}</select></td>
-      <td class="w-s"><input data-r="valid" type="checkbox" aria-label="경매 당시 유효"${r.valid === false ? "" : " checked"}></td>
-      <td><button class="x" type="button" data-del-r="${i}" aria-label="이 권리 삭제">×</button></td>
+      <td class="w-type" data-label="등기목적"><select data-r="type" aria-label="등기목적">${RIGHT_TYPES.map((t) => `<option${t === r.type ? " selected" : ""}>${t}</option>`).join("")}</select></td>
+      <td class="w-who" data-label="권리자 유형"><select data-r="who" aria-label="권리자 유형">${WHO.map((t) => `<option${t === r.who ? " selected" : ""}>${t}</option>`).join("")}</select></td>
+      <td class="w-name" data-label="권리자"><input data-r="name" aria-label="권리자" value="${esc(r.name)}" placeholder="예: OO은행"></td>
+      <td class="w-date" data-label="접수일"><input data-r="date" type="date" aria-label="접수일" value="${esc(r.date || "")}"></td>
+      <td class="w-amt" data-label="금액 (원) · 경매는 청구금액"><input data-r="amount" data-money inputmode="decimal" aria-label="금액" value="${comma(r.amount)}" placeholder="모르면 비움"></td>
+      <td class="w-who" data-label="등기부"><select data-r="book" aria-label="등기부">${["", "토지", "건물", "토지·건물"].map((b) => `<option value="${b}"${b === bookOf(r) ? " selected" : ""}>${b || "모름"}</option>`).join("")}</select></td>
+      <td class="w-s" data-label="유효"><input data-r="valid" type="checkbox" aria-label="경매 당시 유효"${r.valid === false ? "" : " checked"}></td>
+      <td class="w-del"><button class="x" type="button" data-del-r="${i}" aria-label="이 권리 삭제">×</button></td>
     </tr><tr class="rh"><td colspan="8" data-rh="${i}"></td></tr>`).join("") ||
     `<tr><td colspan="8" class="empty">아직 넣은 권리가 없어요. 위 버튼으로 등기부의 근저당부터 추가하세요.</td></tr>`;
 }
@@ -632,13 +684,13 @@ function bookOf(r) {
 function renderTenants() {
   $("#tenTbl tbody").innerHTML = state.tenants.map((t, i) => `
     <tr data-i="${i}">
-      <td class="w-who"><select data-t="kind" aria-label="구분"><option${t.kind === "상가" ? " selected" : ""}>상가</option><option${t.kind !== "상가" ? " selected" : ""}>주거</option></select></td>
-      <td class="w-amt"><input data-t="deposit" data-money inputmode="decimal" aria-label="보증금" value="${comma(t.deposit)}"></td>
-      <td class="w-amt"><input data-t="rent" data-money inputmode="decimal" aria-label="월세" value="${comma(t.rent)}"></td>
-      <td class="w-date"><input data-t="moved" type="date" aria-label="전입일" value="${esc(t.moved || "")}"></td>
-      <td class="w-date"><input data-t="confirmed" type="date" aria-label="확정일자" value="${esc(t.confirmed || "")}"></td>
-      <td class="w-s"><input data-t="claim" type="checkbox" aria-label="배당요구"${t.claim === "Y" ? " checked" : ""}></td>
-      <td><button class="x" type="button" data-del-t="${i}" aria-label="이 임차인 삭제">×</button></td>
+      <td class="w-who" data-label="구분"><select data-t="kind" aria-label="구분"><option${t.kind === "상가" ? " selected" : ""}>상가</option><option${t.kind !== "상가" ? " selected" : ""}>주거</option></select></td>
+      <td class="w-amt" data-label="보증금 (원)"><input data-t="deposit" data-money inputmode="decimal" aria-label="보증금" value="${comma(t.deposit)}"></td>
+      <td class="w-amt" data-label="월세 (원)"><input data-t="rent" data-money inputmode="decimal" aria-label="월세" value="${comma(t.rent)}"></td>
+      <td class="w-date" data-label="전입일·사업자등록일"><input data-t="moved" type="date" aria-label="전입일" value="${esc(t.moved || "")}"></td>
+      <td class="w-date" data-label="확정일자"><input data-t="confirmed" type="date" aria-label="확정일자" value="${esc(t.confirmed || "")}"></td>
+      <td class="w-s" data-label="배당요구"><input data-t="claim" type="checkbox" aria-label="배당요구"${t.claim === "Y" ? " checked" : ""}></td>
+      <td class="w-del"><button class="x" type="button" data-del-t="${i}" aria-label="이 임차인 삭제">×</button></td>
     </tr><tr class="rh"><td colspan="7" data-th="${i}"></td></tr>`).join("") ||
     `<tr><td colspan="7" class="empty">임차인이 없으면 비워두고 다음 단계로 가세요.</td></tr>`;
 }
@@ -1179,7 +1231,7 @@ function applyImport() {
   if (!pending) return;
   const { res, files } = pending, f = res.fields, s = blankState();
   s.name = f.name || files[0].replace(/\.(pdf|txt)$/i, "");
-  for (const k of ["apsl", "usage6", "month", "sale", "sgg", "land", "lp", "bld", "approve", "flr", "tot", "strct", "purps", "landApsl"]) if (f[k] !== undefined) s.prop[k] = f[k];
+  for (const k of ["apsl", "minPrice", "fails", "usage6", "month", "sale", "sgg", "land", "lp", "bld", "approve", "flr", "tot", "strct", "purps", "landApsl"]) if (f[k] !== undefined) s.prop[k] = f[k];
   s.prop.sido = SIDO_FIX[f.sido] || f.sido || "";
   s.prop.hasBld = !!f.hasBld;
   if (s.prop.approve) s.prop.age = ageFrom(s.prop.approve, s.prop.month);
@@ -1212,6 +1264,7 @@ function renderImport() {
           <li>${esc([m.court, m.caseNo].filter(Boolean).join(" ") || "사건번호 없음")} · ${esc(m.kindRaw || "종류 —")} → <b>${esc(f.usage6 || "용도 확인 필요")}</b></li>
           <li>${esc(m.addr || "소재지 —")}</li>
           <li>감정가 <b>${f.apsl ? won(f.apsl) : "없음"}</b>${m.saleDate ? ` · 매각기일 ${esc(m.saleDate)}` : ""}${f.sale ? ` · 매각가 ${won(f.sale)}` : ""}${f.costFixed ? ` · 집행비용 ${won(f.costFixed)}` : ""}</li>
+          <li>현재 최저가 <b>${f.minPrice ? won(f.minPrice) + (f.apsl ? ` (감정가의 ${pct(f.minPrice / f.apsl, 0)})` : "") : "없음"}</b> · 유찰 <b>${f.fails ?? "?"}회</b></li>
           <li>토지 ${f.land ?? "—"}㎡ · 공시지가 ${f.lp ? f.lp.toLocaleString() + "원/㎡" : "—"}</li>
           ${f.hasBld ? `<li>건물 ${f.bld ?? "—"}㎡ · 사용승인 ${esc(f.approve || "—")} · ${esc(f.strct || "구조 —")} · ${esc(f.purps || "용도 —")}</li>` : ""}
         </ul></div>

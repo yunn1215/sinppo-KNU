@@ -174,6 +174,62 @@
     return best;
   }
 
+  /** 경매 진행 상황 → 현재 최저가 · 지금까지 유찰 횟수 (모델 입력)
+   *  ① 기일 내역 줄 "(신건|N차) 날짜 최저가 원 결과": 유찰 줄 수 = 유찰 횟수, 마지막 회차의 최저가 = 현재 최저가
+   *     (이미 매각된 문서면 매각된 회차의 최저가와 그 앞 유찰 횟수 → 테스트셋과 같은 기준)
+   *  ② '최저가(49%) 414,540,000원' · '최저매각가격' 표시 → 최저가
+   *  ③ '유찰 2회' 표시, 없으면 최저가 ÷ 감정가 = 0.7^k 로 계산 (대구지법 30% 기준, 딱 맞을 때만)
+   *  texts: 줄 글자 배열. 반환 {minPrice, fails, failsFrom, rounds, warnings} */
+  const RESULT_KW = /(유찰|매각|변경|취하|기각|연기|정지|불허|미진행|진행|낙찰|입찰)/;
+  function parseProgress(texts, apsl) {
+    const warnings = [], rounds = [];
+    // 기일 행 = "날짜 바로 뒤에 최저가 금액" (+ 결과). 옥션원은 기일 표가 왼쪽 물건 표와 같은 높이라 한 줄에 섞여 읽히므로
+    // 줄 전체가 아니라 날짜 바로 뒤 금액만 봄 (등기부 줄은 날짜 뒤에 권리종류가 와서 걸리지 않음)
+    const ROUND_G = /(?:(신건|\d+\s*차)\s*)?(\d{4})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})\.?\s*(?:\([^)\d]{0,3}\)\s*)?([\d]{1,3}(?:,\d{3}){2,})\s*원\s*(유찰|매각|변경|취하|기각|연기|정지|불허|미진행|진행|낙찰)?/g;
+    const loose = [];                          // 결과 칸이 빈 줄 (다음 기일) — 기일 내역 뒤에 이어질 때만 씀
+    texts.forEach((t) => {
+      for (const x of t.matchAll(ROUND_G)) {
+        const min = num(x[5]); if (!(min >= 1e6)) continue;
+        const res = x[6] || "";
+        (res ? rounds : loose).push({ date: ymd(x[2], x[3], x[4]), min, result: res, label: x[1] || "", text: t });
+      }
+    });
+    if (rounds.length) {
+      const lastD = rounds.map((r) => r.date).sort().pop(), lastMin = Math.min(...rounds.map((r) => r.min));
+      loose.filter((r) => r.date > lastD && r.min <= lastMin).forEach((r) => rounds.push(r));
+    }
+    // 같은 날짜가 두 번 읽히면(표 머리·본문) 한 번만
+    const seen = new Set(), R = rounds.filter((r) => { const k = r.date + "|" + r.min; if (seen.has(k)) return false; seen.add(k); return true; })
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    const flat = texts.join("\n").replace(/[ \t]/g, "");
+    let m = flat.match(/최저(?:매각)?(?:가격|가)(?:\(\d+(?:\.\d+)?%\))?[:：]?([\d,]{7,})원/);
+    const labelMin = m ? num(m[1]) : null;
+    m = flat.match(/유찰\(?(\d+)회\)?/);
+    const labelFails = m ? +m[1] : null;
+
+    let minPrice = null, fails = null, failsFrom = "";
+    const live = R.filter((r) => !/변경|취하|기각|연기|정지|미진행/.test(r.result));
+    if (live.length) {
+      const last = live[live.length - 1];
+      minPrice = last.min;
+      fails = live.filter((r) => r !== last && /유찰/.test(r.result)).length;
+      failsFrom = "기일 내역";
+      if (labelMin && Math.abs(labelMin - minPrice) / labelMin > 0.01) warnings.push(`기일 내역의 마지막 최저가(${minPrice.toLocaleString()}원)와 '최저가' 표시(${labelMin.toLocaleString()}원)가 달라요. 1단계에서 현재 최저가를 확인하세요.`);
+    } else if (labelMin) {
+      minPrice = labelMin;
+    }
+    if (fails === null && labelFails !== null) { fails = labelFails; failsFrom = "'유찰 N회' 표시"; }
+    if (fails === null && minPrice && apsl) {
+      const k = Math.round(Math.log(minPrice / apsl) / Math.log(0.7));
+      if (k >= 0 && Math.abs(apsl * Math.pow(0.7, k) - minPrice) / minPrice < 0.015) { fails = k; failsFrom = "최저가 ÷ 감정가 (0.7배씩)"; }
+      else warnings.push(`최저가가 감정가의 ${(minPrice / apsl * 100).toFixed(0)}%인데 유찰 횟수를 알아내지 못했어요. 1단계에서 유찰 횟수를 넣어주세요.`);
+    }
+    if (minPrice && apsl && minPrice > apsl * 1.001) { warnings.push(`읽은 최저가(${minPrice.toLocaleString()}원)가 감정가보다 커요. 넣지 않았어요.`); minPrice = null; }
+    if (!minPrice && /가림\(최저가\)|기일·유찰이력/.test(flat)) warnings.push("이 문서는 최저가와 기일·유찰 이력이 가려진 예측용 문서예요. 1단계에서 그 회차의 최저가나 유찰 횟수를 직접 넣어야 검증된 기준(진행 중)으로 계산돼요. 비워 두면 경매 시작 전 기준(검증 안 됨)으로 계산해요.");
+    else if (!minPrice) warnings.push("현재 최저가를 찾지 못했어요. 1단계에서 현재 최저가나 유찰 횟수를 넣지 않으면 경매 시작 전 기준(검증 안 됨)으로 계산해요.");
+    return { minPrice, fails, failsFrom, rounds: R, warnings };
+  }
+
   /** cats: {bld_strct: [...], bld_purps: [...]} — 모델 범주 이름과 맞춤 */
   function parseAuction1(items, cats) {
     const lines = toLines(items);
@@ -210,8 +266,10 @@
     m = flat.match(/감정가대비토지([\d.]+)%/);
     if (!(landApsl > 0) && m && apsl) landApsl = Math.round(apsl * Number(m[1]) / 100);
     if (!(landApsl > 0 && apsl && landApsl < apsl)) landApsl = null;
-    m = flat.match(/토지면적([\d.,]+)㎡/) || flat.match(/대지권([\d.,]+)㎡/);
+    // '토지면적 전체: 9386㎡ / 지분: 9336㎡' (지분 매각)이면 매각 대상인 지분 면적
+    m = (/토지면적전체:/.test(flat) && flat.match(/지분:([\d.,]+)㎡/)) || flat.match(/토지면적(?:전체:)?([\d.,]+)㎡/) || flat.match(/대지권([\d.,]+)㎡/);
     const land = m ? num(m[1]) : null;
+    if (/토지면적전체:/.test(flat) && /지분:/.test(flat)) warnings.push("토지 지분 매각이에요. 토지면적은 지분 면적으로 넣었어요.");
     m = flat.match(/건물면적([\d.,]+)㎡/);
     const bld = m ? num(m[1]) : null;
     // 공시지가: 토지 표의 '(255,600원)' — 여러 필지면 면적으로 가중평균
@@ -246,6 +304,9 @@
     set("name", [court.replace("지방법원", "지법"), caseNo, kindRaw].filter(Boolean).join(" "), "사건");
     set("apsl", apsl, "감정가"); set("usage6", usage6, `용도 (${kindRaw || "?"})`);
     set("month", saleDate ? saleDate.slice(0, 7) : null, "매각기일"); set("sale", sale, "매각가");
+    const prog = parseProgress(lines.map((L) => L.text), apsl);
+    set("minPrice", prog.minPrice, "현재 최저가"); set("fails", prog.fails, `유찰 횟수 (${prog.failsFrom})`);
+    warnings.push(...prog.warnings);
     set("sido", sido, "시도"); set("sgg", sgg, "시군구"); set("land", land, "토지면적"); set("lp", lp, "공시지가");
     if (!landOnly) {
       F.hasBld = true;
@@ -412,6 +473,9 @@
     set("name", [court.replace("지방법원", "지법"), caseNo, kindRaw].filter(Boolean).join(" ") || null, "사건");
     set("apsl", apsl, "감정가"); set("usage6", usage6, `용도 (${kindRaw || "?"})`); set("month", saleDate ? saleDate.slice(0, 7) : null, "매각기일");
     set("sale", sale, "매각가"); set("costFixed", cost, "집행비용"); set("sido", sido, "시도"); set("sgg", sgg, "시군구");
+    const prog = parseProgress(texts, apsl);
+    set("minPrice", prog.minPrice, "현재 최저가"); set("fails", prog.fails, `유찰 횟수 (${prog.failsFrom})`);
+    if (apsl) warnings.push(...prog.warnings);
     set("land", land, "토지면적"); set("lp", lp, "공시지가");
     if (bld > 0) { F.hasBld = true; set("bld", bld, "건물면적"); set("approve", approve, "사용승인일"); set("tot", tot, "연면적"); }
     set("baseDate", baseDate, "최선순위 설정일");
@@ -454,7 +518,7 @@
     return out;
   }
 
-  const api = { parseDocument, mergeResults, parseAuction1, parseGeneric, toLines, usageOf, whoOf, typeOf };
+  const api = { parseDocument, mergeResults, parseAuction1, parseGeneric, parseProgress, toLines, usageOf, whoOf, typeOf };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.DocParser = api;
 })(typeof window !== "undefined" ? window : globalThis);

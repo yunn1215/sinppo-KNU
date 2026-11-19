@@ -1608,16 +1608,16 @@ td.n { text-align: right; white-space: nowrap; }
   const RESULT_KW = /(유찰|매각|변경|취하|기각|연기|정지|불허|미진행|진행|낙찰|입찰)/;
   function parseProgress(texts, apsl) {
     const warnings = [], rounds = [];
-    const AMT_G = /([\d]{1,3}(?:,\d{3})+|\d{7,})\s*원/g;
+    // 기일 행 = "날짜 바로 뒤에 최저가 금액" (+ 결과). 옥션원은 기일 표가 왼쪽 물건 표와 같은 높이라 한 줄에 섞여 읽히므로
+    // 줄 전체가 아니라 날짜 바로 뒤 금액만 봄 (등기부 줄은 날짜 뒤에 권리종류가 와서 걸리지 않음)
+    const ROUND_G = /(?:(신건|\d+\s*차)\s*)?(\d{4})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})\.?\s*(?:\([^)\d]{0,3}\)\s*)?([\d]{1,3}(?:,\d{3}){2,})\s*원\s*(유찰|매각|변경|취하|기각|연기|정지|불허|미진행|진행|낙찰)?/g;
     const loose = [];                          // 결과 칸이 빈 줄 (다음 기일) — 기일 내역 뒤에 이어질 때만 씀
     texts.forEach((t) => {
-      const d = t.match(DATE);
-      if (!d || RIGHT_KW.test(t.replace(/(임의|강제)?경매[가-힣]*/g, ""))) return;
-      if (/배당요구|종기|채권|청구|전입|확정일자|사용승인|감정|보존|접수|설정|말소|보증금|월세/.test(t.replace(/\s/g, ""))) return;
-      const amts = [...t.matchAll(AMT_G)].map((x) => num(x[1])).filter((v) => v >= 1e6);
-      if (!amts.length) return;
-      const res = (t.slice(d.index + d[0].length).match(RESULT_KW) || [])[1] || "";
-      (res ? rounds : loose).push({ date: ymd(d[1], d[2], d[3]), min: amts[0], result: res, text: t });
+      for (const x of t.matchAll(ROUND_G)) {
+        const min = num(x[5]); if (!(min >= 1e6)) continue;
+        const res = x[6] || "";
+        (res ? rounds : loose).push({ date: ymd(x[2], x[3], x[4]), min, result: res, label: x[1] || "", text: t });
+      }
     });
     if (rounds.length) {
       const lastD = rounds.map((r) => r.date).sort().pop(), lastMin = Math.min(...rounds.map((r) => r.min));
@@ -1691,8 +1691,10 @@ td.n { text-align: right; white-space: nowrap; }
     m = flat.match(/감정가대비토지([\d.]+)%/);
     if (!(landApsl > 0) && m && apsl) landApsl = Math.round(apsl * Number(m[1]) / 100);
     if (!(landApsl > 0 && apsl && landApsl < apsl)) landApsl = null;
-    m = flat.match(/토지면적([\d.,]+)㎡/) || flat.match(/대지권([\d.,]+)㎡/);
+    // '토지면적 전체: 9386㎡ / 지분: 9336㎡' (지분 매각)이면 매각 대상인 지분 면적
+    m = (/토지면적전체:/.test(flat) && flat.match(/지분:([\d.,]+)㎡/)) || flat.match(/토지면적(?:전체:)?([\d.,]+)㎡/) || flat.match(/대지권([\d.,]+)㎡/);
     const land = m ? num(m[1]) : null;
+    if (/토지면적전체:/.test(flat) && /지분:/.test(flat)) warnings.push("토지 지분 매각이에요. 토지면적은 지분 면적으로 넣었어요.");
     m = flat.match(/건물면적([\d.,]+)㎡/);
     const bld = m ? num(m[1]) : null;
     // 공시지가: 토지 표의 '(255,600원)' — 여러 필지면 면적으로 가중평균

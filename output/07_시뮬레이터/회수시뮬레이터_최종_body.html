@@ -97,6 +97,8 @@ a { color: var(--accent); }
 .col { display: grid; gap: 14px; min-width: 0; }
 
 .box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px; display: grid; gap: 12px; min-width: 0; align-content: start; }
+/* 상자 안 요소가 표 너비만큼 늘어나 상자 밖으로 나가지 않게 (표는 .tbl-wrap 안에서 옆으로 밀림) */
+.box > *, [data-pred] > * { min-width: 0; max-width: 100%; }
 .box h2 { font-size: 15px; font-weight: 700; }
 .box h3 { font-size: 14px; font-weight: 700; }
 .box .cap, .cap { color: var(--muted); font-size: 12.5px; }
@@ -268,6 +270,10 @@ td.n { text-align: right; white-space: nowrap; }
   .drop .row-actions { width: 100%; }
   .drop .row-actions > * { flex: 1; text-align: center; }
   .modes { grid-template-columns: minmax(0, 1fr); }
+  /* 결과 표(회차표·민감도): 제목 줄바꿈, 칸 여백 줄임 */
+  .sens th { white-space: normal; vertical-align: bottom; }
+  .sens td, .sens th { padding: 7px 6px; }
+  .pnums small { overflow-wrap: anywhere; }
   /* 가정값: 선택 상자는 글이 길어 한 줄 전체로 (반쪽 칸에선 잘리고 오른쪽이 빔) */
   #v-assume .f:has(select) { grid-column: 1 / -1; }
   .kpi b { font-size: 18px; }
@@ -2169,7 +2175,7 @@ function predHTML() {
 /** 회차표: 최저가율 · 이번 회차에 팔릴 확률 · 그 회차에서 끝날 확률 · 팔린다면 낙찰가율 P50 */
 function roundsHTML(pr) {
   const p = state.prop, show = pr.rounds.filter((r, i) => i < 5 || pr.byRound[i] >= 0.005);
-  const rows = show.map((r, i) => `<tr><td>${r.round}회차</td><td class="n">${pct(r.rto / 100, 0)}<div class="hint">${won(r.rto / 100 * p.apsl)}</div></td>
+  const rows = show.map((r, i) => `<tr><td style="white-space:nowrap">${r.round}회차</td><td class="n">${pct(r.rto / 100, 0)}<div class="hint">${won(r.rto / 100 * p.apsl)}</div></td>
       <td class="n">${pct(r.p, 0)}</td><td class="n">${pct(pr.byRound[r.round - 1], 0)}</td><td class="n">${pct(r.rto / 100 * Math.exp(r.P[1]), 0)}</td></tr>`).join("");
   return `<div class="pnums"><div><span>시작 최저가</span><b class="num">${pct(pr.startRto / 100, 0)}</b><small class="num">${won(pr.startRto / 100 * p.apsl)}${pr.minPriceGiven ? "" : " (계산값)"}</small></div>
       <div><span>예상 회차</span><b class="num">${Number.isFinite(pr.expRound) ? pr.expRound.toFixed(1) + "회" : "—"}</b><small>팔리기까지</small></div>

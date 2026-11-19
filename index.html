@@ -1650,7 +1650,8 @@ td.n { text-align: right; white-space: nowrap; }
       else warnings.push(`최저가가 감정가의 ${(minPrice / apsl * 100).toFixed(0)}%인데 유찰 횟수를 알아내지 못했어요. 1단계에서 유찰 횟수를 넣어주세요.`);
     }
     if (minPrice && apsl && minPrice > apsl * 1.001) { warnings.push(`읽은 최저가(${minPrice.toLocaleString()}원)가 감정가보다 커요. 넣지 않았어요.`); minPrice = null; }
-    if (!minPrice) warnings.push("현재 최저가를 찾지 못했어요. 1단계에서 현재 최저가나 유찰 횟수를 넣지 않으면 경매 시작 전 기준(검증 안 됨)으로 계산해요.");
+    if (!minPrice && /가림\(최저가\)|기일·유찰이력/.test(flat)) warnings.push("이 문서는 최저가와 기일·유찰 이력이 가려진 예측용 문서예요. 1단계에서 그 회차의 최저가나 유찰 횟수를 직접 넣어야 검증된 기준(진행 중)으로 계산돼요. 비워 두면 경매 시작 전 기준(검증 안 됨)으로 계산해요.");
+    else if (!minPrice) warnings.push("현재 최저가를 찾지 못했어요. 1단계에서 현재 최저가나 유찰 횟수를 넣지 않으면 경매 시작 전 기준(검증 안 됨)으로 계산해요.");
     return { minPrice, fails, failsFrom, rounds: R, warnings };
   }
 

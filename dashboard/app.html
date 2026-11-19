@@ -700,6 +700,9 @@ function compute() {
   if (fm) variants.push({ label: `가압류 ${dayBefore(fm)} (첫 근저당 하루 전)`, s: { sinboMode: "attach", sinboDate: dayBefore(fm), useActualSinbo: false, sinboAmount: amt } });
   const er = earliestRankDate();
   if (er) variants.push({ label: `근저당 ${dayBefore(er)} (가장 앞 순위)`, s: { sinboMode: "mortgage", sinboDate: dayBefore(er), useActualSinbo: false, sinboAmount: amt } });
+  // 일부대위 규칙(멘토 확인 전): 지금 설정의 반대 규칙도 같이 계산해 나란히 보여줌
+  const subAlt = (state.assume.partialSubrogation || "pro_rata") === "pro_rata" ? "bank_first" : "pro_rata";
+  variants.push({ label: `일부대위 '${subAlt === "bank_first" ? "은행 먼저" : "비율 안분"}'로 바꾸면 (지금 신보 설정 그대로)`, s: { partialSubrogation: subAlt } });
   R.sens = variants.map((v) => ({ ...v, sm: E.simulate(E.buildCase(cs, settingsFor(v.s), DATA.small), p.apsl, R.pred.p, taxes, 10000, 2026).summary }));
   R.be = E.breakeven(R.built, p.apsl);
   R.beTaxFirst = R.built.taxNeeded ? (() => { const tx = taxes[Math.min(1, taxes.length - 1)];
@@ -726,10 +729,10 @@ function predHTML() {
     <div class="pnums">${[["나쁠 때 P10", pr.p[0]], ["보통 P50", pr.p[1]], ["좋을 때 P90", pr.p[2]]].map(([l, v]) =>
       `<div><span>${l}</span><b class="num">${pct(v)}</b><small class="num">${won(v * p.apsl)}</small></div>`).join("")}</div>
     ${roundsHTML(pr)}
-    <p class="note">공매로 학습한 ① 매각확률(경매 재보정) × ② 낙찰가 배수(경매 보정) · 회차별 ${M.nSim.toLocaleString()}회 계산 · 지가변동률 ${pr.market.month} 기준${pr.market.capped ? "(최신값)" : ""} · 최근 공매 낙찰 ${pr.recent.months.slice(-1)[0] || ""}~${pr.recent.months[0] || ""}</p>
+    <p class="note">공매로 학습한 ① 매각확률(경매 재보정 + 유찰 횟수) × ② 낙찰가 배수(경매 보정) · 회차별 ${M.nSim.toLocaleString()}회 계산 · 지가변동률 ${pr.market.month} 기준${pr.market.capped ? "(최신값)" : ""} · 최근 공매 낙찰 ${pr.recent.months.slice(-1)[0] || ""}~${pr.recent.months[0] || ""}</p>
     ${miss.length ? `<div class="alert"><b>비어 있음:</b> ${miss.join(", ")}${miss.includes("공시지가") ? ". 공시지가가 없으면 예측 오차가 커져요 (검증에서 14%p → 20%p)." : ""}</div>` : ""}
     ${BIAS[p.usage6] ? `<div class="alert"><b>참고:</b> ${p.usage6}는 2026년 10월 대구·경북 경매에서 실제보다 평균 ${BIAS[p.usage6]}%p 높게 예측됐어요.</div>` : ""}
-    ${!pr.minPriceGiven && !(p.fails > 0) ? `<p class="note">현재 최저가를 비워 두어 <b>경매 시작 전(최저가 = 감정가)</b> 기준으로 계산했어요.</p>` : ""}`;
+    ${!pr.minPriceGiven && !(p.fails > 0) ? `<div class="alert"><b>경매 시작 전(최저가 = 감정가) 기준으로 계산했어요.</b> 이 시점의 예측은 아직 검증되지 않았어요. 검증된 건 최저가가 공고된 뒤(진행 중)의 예측이니, 현재 최저가나 유찰 횟수를 넣어 주세요.</div>` : ""}`;
 }
 /** 회차표: 최저가율 · 이번 회차에 팔릴 확률 · 그 회차에서 끝날 확률 · 팔린다면 낙찰가율 P50 */
 function roundsHTML(pr) {

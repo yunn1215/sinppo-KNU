@@ -42,6 +42,8 @@ SHIFT_GROUPS = {"공장·창고": "공장·창고", "상가·업무": "상가·�
 SHRINK_K = 20                       # 용도군 이동폭을 건수가 적으면 전체 이동폭 쪽으로 축소
 MACH_RECOVERY = 0.5                 # 민감도: 기계기구 몫이 부동산 몫 대비 몇 배 비율로 팔리는지 (1.0 = 구분 안 함)
 N_BOOT = 1000
+K_MAX = 5                           # ① 경매 재보정에 넣는 유찰 횟수 구간 (0,1,2,3,4,5회 이상)
+SELL_K_C = 1.0                      # 유찰 횟수 계수 L2 규제 (건수가 적은 구간은 0 쪽으로 줄임)
 
 
 def auction_usage(u, court_u):
@@ -180,6 +182,45 @@ def crossfit_platt(case, y, p):
     return out, _platt_fit(z, y)
 
 
+def auction_k(rto):
+    """최저가율(%) → 경매 유찰 횟수 (최저가 = 감정가 × 0.7^k). 화면(JS)에서도 같은 규칙으로 계산"""
+    k = np.round(np.log(np.clip(np.asarray(rto, dtype=float), 1e-6, None) / 100) / np.log(AUCTION_DROP))
+    return np.clip(k, 0, K_MAX).astype(int)
+
+
+def _platt_k_design(z, k):
+    return np.column_stack([z, np.eye(K_MAX + 1)[k]])
+
+
+def _platt_k_fit(z, k, y):
+    from sklearn.linear_model import LogisticRegression
+    m = LogisticRegression(C=SELL_K_C, max_iter=2000).fit(_platt_k_design(z, k), y)
+    return {"a": float(m.intercept_[0]), "b": float(m.coef_[0, 0]), "k": [float(v) for v in m.coef_[0, 1:]]}
+
+
+def platt_k_predict(par, p, k):
+    z = par["a"] + par["b"] * logit(p) + np.asarray(par["k"])[k]
+    return 1 / (1 + np.exp(-z))
+
+
+def crossfit_platt_k(case, y, p):
+    """① 경매용 재보정 + 유찰 횟수: logit(p_경매) = a + b·logit(p_공매) + c_k (k = 경매 유찰 횟수 0~5+).
+    Platt 만으로는 공매 모델의 최저가율 기울기가 경매와 달라 신건(유찰 0회, 최저가 100%)을 과대예측함
+    (10월 신건 32건 중 매각 0건인데 예측 17%) → 유찰 횟수별 차이를 따로 맞춤. 사건 단위 2-fold 교차(평가) + 전체(실사용)"""
+    rng = np.random.default_rng(SEED + 1)
+    key = (case["법원"] + " " + case["사건번호"]).values
+    uk = np.unique(key)
+    half = dict(zip(uk, rng.permutation(len(uk)) % 2))
+    fold = np.array([half[k] for k in key])
+    z = logit(p)
+    kk = auction_k(case["rto"].values)
+    out = np.zeros(len(y))
+    for f in (0, 1):
+        par = _platt_k_fit(z[fold != f], kk[fold != f], y[fold != f])
+        out[fold == f] = platt_k_predict(par, p[fold == f], kk[fold == f])
+    return out, _platt_k_fit(z, kk, y)
+
+
 def boot_ci(case, y, P, n=N_BOOT):
     """사건 단위 부트스트랩 (같은 사건의 여러 물건은 함께 뽑음) — MAE 95% 구간"""
     rng = np.random.default_rng(SEED)
@@ -251,19 +292,22 @@ def main():
     y1 = case["label"].values
     base9 = case["usage6"].map(rate9).values
     p_cf, platt = crossfit_platt(case, y1, p_raw)
+    p_cfk, platt_k = crossfit_platt_k(case, y1, p_raw)
     sell_rep = pd.DataFrame([eval_prob("기준선: 9월 매각통계 매각율(용도별 상수)", y1, base9),
                              eval_prob("① transfer (공매 학습 그대로)", y1, p_raw),
                              eval_prob("① transfer + 9월 매각통계 절편 보정", y1, p_stat),
-                             eval_prob("★ ① transfer + 경매 재보정 (사건 교차)", y1, p_cf)])
+                             eval_prob("① transfer + 경매 재보정 (사건 교차)", y1, p_cf),
+                             eval_prob("★ ① transfer + 경매 재보정 + 유찰 횟수 (사건 교차)", y1, p_cfk)])
     print("\n[① 매각확률 — 경매 10월]"); show(sell_rep)
     print("9월 법원 매각율(회차당):", {k: round(v, 3) for k, v in rate9.items()},
           f"| 시험셋 실제 매각률 {y1.mean():.1%} (10월 매각공고 전수) → 법원 통계와 집계 기준이 달라 절대 수준 비교는 어려움, AUC(순서)로 판단")
     by = [eval_prob(f"transfer · {u}", y1[idx], p_raw[idx]) for u, idx in case.groupby("usage6").indices.items()]
     print("\n[①] 용도별"); show(pd.DataFrame(by))
     print("\n[①] 경매 유찰 횟수별 실제 매각률 vs 예측 평균")
-    print(case.assign(p=p_raw, p2=p_cf).groupby("경매_유찰횟수").agg(n=("label", "size"), 실제=("label", "mean"),
-          예측_공매그대로=("p", "mean"), 예측_재보정=("p2", "mean")).round(3).to_string())
-    print(f"경매 재보정(전체 추정, 실사용): logit p = {platt[0]:.3f} + {platt[1]:.3f} × logit p_공매")
+    print(case.assign(p=p_raw, p2=p_cf, p3=p_cfk, k=auction_k(case["rto"].values)).groupby("k").agg(n=("label", "size"), 실제=("label", "mean"),
+          예측_공매그대로=("p", "mean"), 예측_재보정=("p2", "mean"), 예측_재보정_유찰=("p3", "mean")).round(3).to_string())
+    print(f"경매 재보정(전체 추정): logit p = {platt[0]:.3f} + {platt[1]:.3f} × logit p_공매")
+    print(f"★ 실사용: logit p = {platt_k['a']:.3f} + {platt_k['b']:.3f} × logit p_공매 + 유찰 0~5회 계수 {np.round(platt_k['k'], 3).tolist()}")
     sell_rep.to_csv(CALIB_DIR / "sell_eval.csv", index=False, encoding="utf-8-sig")
     calib_table(y1, p_raw).to_csv(CALIB_DIR / "sell_calibration.csv", index=False, encoding="utf-8-sig")
 
@@ -317,11 +361,12 @@ def main():
     rep.to_csv(CALIB_DIR / "auction_eval.csv", index=False, encoding="utf-8-sig")
     allp = case[["사건", "usage6", "apslEvlAmt", "rto", "경매_유찰횟수", "label", "y"]].copy()
     allp["p_sell_공매그대로"] = p_raw
-    allp["p_sell"] = p_cf
+    allp["p_sell_platt"] = p_cf
+    allp["p_sell"] = p_cfk
     allp.to_csv(CALIB_DIR / "auction_sell_predictions.csv", index=False, encoding="utf-8-sig")
     save_json({"prpt_for_auction": PRPT_FOR_AUCTION, "shift_log_by_group": final_shift, "shift_groups": SHIFT_GROUPS,
                "widen_log": final_widen,
-               "sell_logit_shift_sept_stat": shift_u, "sell_platt": list(platt), "auction_drop": AUCTION_DROP,
+               "sell_logit_shift_sept_stat": shift_u, "sell_platt": list(platt), "sell_platt_k": platt_k, "sell_k_max": K_MAX, "auction_drop": AUCTION_DROP,
                "note": "실사용: 낙찰가 = 현재 최저가 × exp(② 예측 + 용도군 이동폭). 이동폭은 2026-10 경매 219건 전체로 추정"},
               CALIB_DIR / "auction_shift.json")
     print(f"\n저장: {nfc(CALIB_DIR)}/auction_predictions.csv (배당 엔진 입력), auction_eval.csv, sell_eval.csv, auction_shift.json")

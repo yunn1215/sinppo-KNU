@@ -21,14 +21,14 @@ import pandas as pd
 
 import dividend_engine as E
 from common import QS, AUCTION_DROP, CALIB_DIR, OUT_ROOT, SEED, show, nfc
-from step4_경매시험 import load_cases, predict_mult, predict_sell, logit
+from step4_경매시험 import load_cases, predict_mult, predict_sell, logit, auction_k, platt_k_predict
 
 warnings.filterwarnings("ignore")
 
 SIM_DIR = OUT_ROOT / "06_시뮬레이션"
 SIM_DIR.mkdir(parents=True, exist_ok=True)
 MAX_ROUNDS = 8
-SELL_CALIB = "platt"            # "platt": 4단계 경매 재보정(10월 매각공고 388건 기준, 매각 57%) / "stat": 9월 법원 매각통계 절편만(회차당 12~20%)
+SELL_CALIB = "platt_k"          # "platt_k": 경매 재보정 + 유찰 횟수(기본) / "platt": 재보정만 / "stat": 9월 법원 매각통계 절편만
 N_SIM = 4000
 
 
@@ -46,7 +46,9 @@ def round_table(case_row, start_rto, prpt, shift):
     rows["누적_유찰횟수"] = ((100 - rows["rto"]) / 10).round().clip(lower=0)
     p = predict_sell(rows, prpt)
     u = case_row["usage6"]
-    if SELL_CALIB == "platt":                                     # 경매 재보정 (4단계, 기본)
+    if SELL_CALIB == "platt_k":                                   # 경매 재보정 + 유찰 횟수 (4단계, 기본)
+        p = platt_k_predict(shift["sell_platt_k"], p, auction_k(rows["rto"].values))
+    elif SELL_CALIB == "platt":                                   # 경매 재보정만
         a, b = shift["sell_platt"]
         p = 1 / (1 + np.exp(-(a + b * logit(p))))
     else:                                                         # 9월 법원 매각통계 절편만

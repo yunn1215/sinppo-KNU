@@ -703,7 +703,7 @@
     const rows = [];
     groups.forEach((g, gi) => g.claims.forEach((c) => rows.push({ group: g.name, gi, name: c.name, kind: c.kind, claim: c.amount,
       paid: paid[c.id] ? paid[c.id][0] : 0, sinbo: built.sinboIds.includes(c.id), max: c.max, origDate: c.origDate,
-      basis: c.basis, pool: !!g.pool, subrog: !!c.subrog })));
+      basis: c.basis, pool: !!g.pool, subrog: !!c.subrog, date: c.date || null, rank: typeof c.rank === "string" ? c.rank : null, bp: c.bp || null })));
     return { rows, remain: remain[0] };
   }
 

@@ -114,6 +114,10 @@ a { color: var(--accent); }
 .f label .req { color: var(--crit); margin-left: 2px; }
 .f input, .f select, td input, td select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: var(--surface-2); }
 .f input, .f select { height: 38px; }
+/* 아이폰 사파리: 날짜·월 칸이 자체 최소 폭·높이를 가져 칸 밖으로 튀어나옴 → 기본 모양을 끄고 다른 칸과 같은 크기로 */
+input[type="date"], input[type="month"] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; line-height: 1.2; text-align: left; }
+input[type="date"]::-webkit-date-and-time-value, input[type="month"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-height: 1.2em; }
+input[type="date"]::-webkit-datetime-edit, input[type="month"]::-webkit-datetime-edit { padding: 0; }
 .f input:focus, .f select:focus, td input:focus, td select:focus { border-color: var(--accent); background: var(--surface); outline: none; }
 .f.missing input, .f.missing select { border-color: var(--crit); }
 .hint { font-size: 11.5px; color: var(--muted); min-height: 1.2em; }
@@ -274,6 +278,23 @@ td.n { text-align: right; white-space: nowrap; }
   .stepnav > * { flex: 1; text-align: center; }
   .stepnav > span:empty { display: none; }
 
+  /* 배당표: 줄마다 순위 / 권리 / 청구·배당·비율 */
+  .tbl-wrap:has(> table.dist) { overflow: visible; }
+  table.dist, .dist tbody { display: block; }
+  .dist thead { display: none; }
+  .dist tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 56px; gap: 2px 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); align-items: center; }
+  .dist tbody tr:last-child { border-bottom: 0; }
+  .dist tr.gs { border-top: 2px solid var(--line); }
+  .dist td { padding: 0 !important; border: 0 !important; min-width: 0; }
+  .dist td:empty { display: none; }
+  .dist td.g { grid-column: 1 / -1; font-weight: 600; }
+  .dist td:nth-child(2) { grid-column: 1 / -1; overflow-wrap: anywhere; }
+  .dist td.n { text-align: left; }
+  .dist td:nth-child(3)::before { content: "청구 "; color: var(--muted); font-size: 11.5px; }
+  .dist td:nth-child(4)::before { content: "배당 "; color: var(--muted); font-size: 11.5px; }
+  .dist .meter { margin-top: 0; }
+  .dist tr.sb { background: var(--accent-soft); }
+  .dist tr.sb td { background: transparent; }
   .tbl-wrap:has(> table.ed) { border: 0; overflow: visible; }
   table.ed, .ed tbody { display: block; }
   .ed thead { display: none; }
@@ -1299,7 +1320,7 @@ td.n { text-align: right; white-space: nowrap; }
     const rows = [];
     groups.forEach((g, gi) => g.claims.forEach((c) => rows.push({ group: g.name, gi, name: c.name, kind: c.kind, claim: c.amount,
       paid: paid[c.id] ? paid[c.id][0] : 0, sinbo: built.sinboIds.includes(c.id), max: c.max, origDate: c.origDate,
-      basis: c.basis, pool: !!g.pool, subrog: !!c.subrog })));
+      basis: c.basis, pool: !!g.pool, subrog: !!c.subrog, date: c.date || null, rank: typeof c.rank === "string" ? c.rank : null, bp: c.bp || null })));
     return { rows, remain: remain[0] };
   }
 
@@ -2305,6 +2326,17 @@ function basisHint(r) {
   if (r.basis === "청구금액") return `<div class="hint">경매 청구금액 기준${r.max ? ` · 최고액 ${won(r.max)}` : ""}</div>`;
   return r.max && Math.abs(r.max - r.claim) > 1 ? `<div class="hint">최고액 ${won(r.max)}</div>` : "";
 }
+/** 배당표 줄 구분용: 을구 순위번호 · 접수일 (토지·건물 등기부가 다르면 둘 다). 같은 권리자의 근저당이 여러 건일 때 헷갈리지 않게 */
+function posHint(r) {
+  const one = (rk, d) => [rk ? `을${rk}` : "", d || ""].filter(Boolean).join(" ");
+  let t = "";
+  if (r.bp && Object.keys(r.bp).length > 1) {
+    const e = Object.entries(r.bp), same = e.every(([, x]) => x.rank === e[0][1].rank && x.date === e[0][1].date);
+    t = same ? one(e[0][1].rank, e[0][1].date) : e.map(([b, x]) => `${b} ${one(x.rank, x.date)}`).join(" / ");
+  } else if (r.bp && Object.keys(r.bp).length === 1) { const [b, x] = Object.entries(r.bp)[0]; t = `${b} ${one(x.rank, x.date)}`; }
+  else t = one(r.rank, r.date);
+  return t ? `<div class="hint">${esc(t)}</div>` : "";
+}
 function renderDist() {
   const { pred, built } = R, p = state.prop;
   if (!built || (!pred && !R.saleOnly)) return;
@@ -2321,10 +2353,11 @@ function renderDist() {
   }
   const t = E.table(built, price, built.taxNeeded ? state.view.tax : 0, !!state.assume.taxFirst);
   let prev = -1;
+  const nameN = {}; t.rows.forEach((r) => { nameN[r.name] = (nameN[r.name] || 0) + 1; });
   $("#distTbl").innerHTML = `<thead><tr><th>순위</th><th>권리</th><th class="n">청구액</th><th class="n">배당액</th><th>배당률</th></tr></thead><tbody>` +
     t.rows.map((r) => { const first = r.gi !== prev; prev = r.gi; const ratio = r.claim > 0 ? r.paid / r.claim : 0;
       return `<tr class="${r.sinbo ? "sb" : ""} ${first && r.gi > 0 ? "gs" : ""}"><td class="g">${first ? `${r.gi} · ${esc(r.group)}` : ""}</td>
-        <td>${esc(r.name)}${basisHint(r)}${r.subrog ? `<div class="hint">근저당 일부이전 (원래 근저당 순위 · ${state.assume.partialSubrogation === "bank_first" ? "원래 권리자 다음" : "원래 권리자와 비율로"})</div>` : ""}${r.origDate ? `<div class="hint">가압류 ${esc(r.origDate)} → ${r.pool ? "안분 후 흡수" : "안분"}</div>` : ""}</td>
+        <td>${esc(r.name)}${nameN[r.name] > 1 ? posHint(r) : ""}${basisHint(r)}${r.subrog ? `<div class="hint">근저당 일부이전 (원래 근저당 순위 · ${state.assume.partialSubrogation === "bank_first" ? "원래 권리자 다음" : "원래 권리자와 비율로"})</div>` : ""}${r.origDate ? `<div class="hint">가압류 ${esc(r.origDate)} → ${r.pool ? "안분 후 흡수" : "안분"}</div>` : ""}</td>
         <td class="n">${won(r.claim)}</td><td class="n">${won(r.paid)}</td><td><div class="meter" title="${pct(ratio, 0)}"><i style="width:${Math.min(100, ratio * 100)}%"></i></div></td></tr>`; }).join("") +
     `<tr class="gs"><td class="g">잉여</td><td>소유자에게 반환</td><td></td><td class="n">${won(t.remain)}</td><td></td></tr></tbody>`;
   // 검증용: 직접 넣은 낙찰가(또는 지금 고른 낙찰가)에서 배당 엔진만 돌린 신보 배당액

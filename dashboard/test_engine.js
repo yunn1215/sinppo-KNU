@@ -1,9 +1,9 @@
-// 파이썬 = JS 일치 확인:  node dashboard/test_engine.js   (먼저 python pipeline/build_dashboard.py)
+// 파이썬 = JS 일치 확인 (최종 시뮬레이터):  node dashboard/test_engine.js   (먼저 python pipeline/step7_시뮬레이터.py)
 const fs = require("fs"), path = require("path");
 const E = require("./engine.js");
-const OUT = path.join(__dirname, "..", "output");
-const DATA = JSON.parse(fs.readFileSync(path.join(OUT, "dashboard_data.json"), "utf8"));
-const REF = JSON.parse(fs.readFileSync(path.join(OUT, "dashboard_ref.json"), "utf8"));
+const OUT = path.join(__dirname, "..", "output", "07_시뮬레이터");
+const DATA = JSON.parse(fs.readFileSync(path.join(OUT, "simulator_data.json"), "utf8"));
+const REF = JSON.parse(fs.readFileSync(path.join(OUT, "simulator_ref.json"), "utf8"));
 let fail = 0;
 
 // ⓪ 손계산 테스트 (step3_dividend.hand_tests 와 같은 값)
@@ -52,15 +52,41 @@ let fail = 0;
   console.log(`⓪ 손계산 테스트 ${cases.length}개: ${bad.length ? "❌ " + bad.length + "개 실패" : "모두 통과 ✅"}`);
 }
 
-// ① 낙찰가 예측: 경매 219건
-let maxd = 0;
-for (const r of REF.pred) {
-  const got = E.predictAuction(DATA.model, DATA.rone, r.prop).p;
-  const d = Math.max(...got.map((v, i) => Math.abs(v - r.p[i])));
-  if (d > maxd) maxd = d;
-  if (d > 1e-9) { fail++; if (fail < 5) console.log("예측 불일치", r.key, got, r.p); }
+// ① 회차표 (최저가율 · 매각확률 · log 배수 P10/P50/P90): 배당 50건, 결정적 계산이라 정확히 같아야 함
+{
+  let maxd = 0, n = 0;
+  for (const r of REF.pred) {
+    const { f } = E.buildFeatures2(r.prop, DATA.rone, DATA.model);
+    const rt = E.roundTable(DATA.model, f, r.rto[0]);
+    rt.forEach((x, k) => {
+      const d = Math.max(Math.abs(x.rto - r.rto[k]), Math.abs(x.p - r.p[k]), ...x.P.map((v, j) => Math.abs(v - r.P[k][j])));
+      if (d > maxd) maxd = d;
+      if (d > 1e-9 && n++ < 4) console.log("  회차표 불일치", r.key, k + 1, x.p, r.p[k], x.P, r.P[k]);
+    });
+  }
+  if (maxd > 1e-9) fail++;
+  console.log(`① 회차표 ${REF.pred.length}건 × ${DATA.model.maxRounds}회차: 최대 차이 ${maxd.toExponential(2)} ${maxd <= 1e-9 ? "✅" : "❌"}`);
+  // 화면 입력(현재 최저가)으로 시작 최저가율이 같은지
+  let md = 0;
+  for (const r of REF.pred) md = Math.max(md, Math.abs(E.predictAuction2(DATA.model, DATA.rone, r.prop, 200).startRto - r.rto[0]));
+  console.log(`   현재 최저가 → 시작 최저가율: 최대 차이 ${md.toExponential(2)} ${md <= 1e-9 ? "✅" : "❌"}`);
+  if (md > 1e-9) fail++;
 }
-console.log(`① 낙찰가 예측 ${REF.pred.length}건: 최대 차이 ${maxd.toExponential(2)} ${maxd <= 1e-9 ? "✅" : "❌"}`);
+// ①' 회차별 몬테카를로: 난수만 달라 근사 비교 (파이썬·JS 각 2만 회)
+{
+  let w50 = 0, w1090 = 0, wu = 0;
+  for (const r of REF.pred) {
+    const g = E.predictAuction2(DATA.model, DATA.rone, r.prop, 20000, 7);
+    w50 = Math.max(w50, Math.abs(g.p[1] - r.mc[1]));
+    w1090 = Math.max(w1090, Math.abs(g.p[0] - r.mc[0]), Math.abs(g.p[2] - r.mc[2]));
+    wu = Math.max(wu, Math.abs(g.unsold - r.unsold));
+  }
+  const ok = w50 < 0.01 && w1090 < 0.02 && wu < 0.01;
+  if (!ok) fail++;
+  console.log(`①' 몬테카를로 최종 낙찰가율 (JS vs 파이썬): P50 최대 차이 ${(w50 * 100).toFixed(2)}%p · P10/P90 ${(w1090 * 100).toFixed(2)}%p · 미매각 ${(wu * 100).toFixed(2)}%p ${ok ? "✅" : "❌"}`);
+  const t0 = Date.now(); E.predictAuction2(DATA.model, DATA.rone, REF.pred[0].prop);
+  console.log(`   화면 1회 계산 시간 (${DATA.model.nSim.toLocaleString()}회) ${Date.now() - t0}ms`);
+}
 
 // ② 배당: 실제 매각가 × 세금 시나리오 중간값으로 배당표 비교
 const S0 = DATA.settings;

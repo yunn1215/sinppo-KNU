@@ -1,4 +1,4 @@
-<title>신보 회수 시뮬레이터</title>
+<title>신보 회수 시뮬레이터 (최종)</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
@@ -286,7 +286,7 @@ td.n { text-align: right; white-space: nowrap; }
 
     <section class="view" id="v-property" hidden>
       <div class="vh"><span class="eyebrow">STEP 1 / 5</span><h1>물건 정보</h1>
-        <p>경매 공고와 건축물대장을 보고 넣어요. 이 정보로 낙찰가율 범위(P10·P50·P90)를 예측해요. <b>*</b> 표시만 필수예요.</p></div>
+        <p>경매 공고와 건축물대장을 보고 넣어요. <b>현재 최저가</b>에서 시작해 회차마다 ① 팔릴 확률과 ② 팔린다면 최저가의 몇 배에 팔릴지를 계산하고, 유찰되면 최저가를 30% 낮춰 다음 회차로 넘겨 최종 낙찰가율 범위(P10·P50·P90)를 구해요. <b>*</b> 표시만 필수예요.</p></div>
       <div class="drop" id="drop">
         <div class="ic">PDF</div>
         <div class="tx"><b>경매 문서로 자동 입력</b><span class="cap">옥션원·법원경매정보 인쇄본, 등기부, 매각물건명세서처럼 글자가 들어 있는 PDF를 끌어다 놓으세요. 양식은 달라도 되고, 여러 개를 함께 올리면 합쳐서 채워요. 파일은 이 브라우저 안에서만 읽어요.</span></div>
@@ -306,6 +306,8 @@ td.n { text-align: right; white-space: nowrap; }
               <div class="f" data-req="apsl"><label for="p_apsl">감정가 (원)<span class="req">*</span></label><input id="p_apsl" data-p="apsl" data-money inputmode="decimal" placeholder="예: 84.6억"><div class="hint" data-hint="apsl"></div></div>
               <div class="f" data-req="usage6"><label for="p_usage6">용도<span class="req">*</span></label><select id="p_usage6" data-p="usage6"></select></div>
               <div class="f" data-req="month"><label for="p_month">매각(예정)월<span class="req">*</span></label><input id="p_month" data-p="month" type="month"></div>
+              <div class="f"><label for="p_minPrice">현재 최저가 (원)</label><input id="p_minPrice" data-p="minPrice" data-money inputmode="decimal" placeholder="비우면 아래 유찰 횟수로 계산"><div class="hint" data-hint="minPrice"></div></div>
+              <div class="f"><label for="p_fails">지금까지 유찰 횟수</label><input id="p_fails" data-p="fails" inputmode="numeric" placeholder="0 = 경매 시작 전"><div class="hint">최저가를 비우면 감정가 × 0.7<sup>횟수</sup>로 계산해요 (대구지법 기준)</div></div>
               <div class="f"><label for="p_sale">실제 매각가 (원)</label><input id="p_sale" data-p="sale" data-money inputmode="decimal" placeholder="이미 팔렸으면 비교용"><div class="hint" data-hint="sale"></div></div>
             </div>
           </div>
@@ -454,7 +456,7 @@ td.n { text-align: right; white-space: nowrap; }
 
     <section class="view" id="v-result" hidden>
       <div class="vh"><span class="eyebrow">RESULT</span><h1>회수 예측 결과</h1>
-        <p>예상 낙찰가 범위에서 1만 번 뽑아, 매번 배당 순서대로 나눈 결과예요.</p></div>
+        <p>현재 최저가에서 회차별로 계산한 '팔린다면'의 낙찰가 범위에서 1만 번 뽑아, 매번 배당 순서대로 나눈 결과예요.</p></div>
       <div id="resNeed"></div>
       <div class="res-grid" id="resBody">
         <div class="box full"><p class="lead" id="lead"></p><div class="kpis four" id="kpis"></div><div id="biasNote"></div></div>
@@ -507,7 +509,7 @@ const SHORT = { "서울특별시": "서울", "부산광역시": "부산", "대�
 const RIGHT_TYPES = ["근저당권설정", "전세권설정", "임차권등기", "압류", "가압류", "경매개시결정", "소유권이전", "기타"];
 const WHO = ["은행·금융기관", "개인·기타 법인", "세무서", "지자체", "건강보험공단", "근로복지공단", "신보"];
 const VIEWS = ["property", "rights", "tenants", "sinbo", "assume", "result", "tests"];
-const STORE = "sinbo-sim-v2";
+const STORE = "sinbo-sim-final-v1";
 // 경매 시험셋(219건) 채점 결과에서 온 경고용 숫자 (2단계가 계산해 넣음). 예측을 보정하는 데 쓰지 않음
 const EV = (DATA.model && DATA.model.eval) || null;
 const BIAS = Object.fromEntries(Object.entries((EV && EV.bias_by_usage) || {}).filter(([, v]) => v >= 5).map(([k, v]) => [k, Math.round(v)]));
@@ -545,7 +547,7 @@ const defaultAssume = () => ({ costRate: DATA.settings.costRate, costFixed: null
   taxFirst: !!DATA.settings.taxFirst, partialSubrogation: DATA.settings.partialSubrogation || "pro_rata", useAuctionClaim: DATA.settings.useAuctionClaim !== false });
 function blankState() {
   return { source: null, name: "",
-    prop: { apsl: null, usage6: "", sido: "", sgg: "", month: thisMonth(), land: null, lp: null, hasBld: false, bld: null, approve: "", age: null,
+    prop: { apsl: null, minPrice: null, fails: 0, usage6: "", sido: "", sgg: "", month: thisMonth(), land: null, lp: null, hasBld: false, bld: null, approve: "", age: null,
       flr: null, tot: null, strct: "", purps: "", sale: null, landApsl: null },
     baseDate: "", regionAuto: true, region: "그 밖의 지역", rights: [], tenants: [], tenantsNone: false,
     sinbo: { mode: "general", date: "", amount: null, linked: true, useActual: true },
@@ -554,7 +556,7 @@ function blankState() {
 function caseToState(c) {
   const p = c.prop;
   return { source: { key: c.key }, name: `${c.court} ${c.caseNo}-${c.item} ${c.use}`,
-    prop: { apsl: c.apsl, usage6: p.usage6, sido: p.sido, sgg: p.sgg || "", month: p.month, land: p.land, lp: p.lp, hasBld: p.bld > 0,
+    prop: { apsl: c.apsl, minPrice: p.minPrice ?? null, fails: p.fails ?? 0, usage6: p.usage6, sido: p.sido, sgg: p.sgg || "", month: p.month, land: p.land, lp: p.lp, hasBld: p.bld > 0,
       bld: p.bld, approve: "", age: p.age, flr: p.flr, tot: p.tot, strct: p.strct || "", purps: p.purps || "", sale: c.sale, landApsl: c.landApsl || null },
     baseDate: c.baseDate || "", regionAuto: true, region: c.region, rights: clone(c.rights), tenants: clone(c.tenants),
     tenantsNone: !c.tenants.length, visited: {}, importInfo: null,
@@ -666,7 +668,7 @@ function settingsFor(over = {}) {
 }
 function modelInput() {
   const p = state.prop, b = p.hasBld;
-  return { apsl: p.apsl, usage6: p.usage6, sido: p.sido, sgg: p.sgg, month: p.month, land: p.land, lp: p.lp,
+  return { apsl: p.apsl, minPrice: p.minPrice, fails: p.fails, usage6: p.usage6, sido: p.sido, sgg: p.sgg, month: p.month, land: p.land, lp: p.lp,
     bld: b ? p.bld : null, age: b ? p.age : null, flr: b ? p.flr : null, tot: b ? p.tot : null, strct: b ? p.strct : "", purps: b ? p.purps : "" };
 }
 
@@ -687,7 +689,7 @@ function compute() {
     }
     return;
   }
-  R.pred = E.predictAuction(M, DATA.rone, modelInput());
+  R.pred = E.predictAuction2(M, DATA.rone, modelInput());
   if (!sinboReady()) return;
   const taxes = state.assume.taxScenarios;
   R.mc = E.simulate(R.built, p.apsl, R.pred.p, taxes, 10000, 2026, !!state.assume.taxFirst);
@@ -723,9 +725,21 @@ function predHTML() {
       <span class="lab bot" style="left:${X(1)}">감정가</span></div>
     <div class="pnums">${[["나쁠 때 P10", pr.p[0]], ["보통 P50", pr.p[1]], ["좋을 때 P90", pr.p[2]]].map(([l, v]) =>
       `<div><span>${l}</span><b class="num">${pct(v)}</b><small class="num">${won(v * p.apsl)}</small></div>`).join("")}</div>
-    <p class="note">공매 모델 × 경매 보정계수 ${pr.factor.toFixed(2)} · 범위 보정 ±${(pr.cqr * 100).toFixed(1)}%p · 지가변동률 ${pr.market.month} 기준</p>
+    ${roundsHTML(pr)}
+    <p class="note">공매로 학습한 ① 매각확률(경매 재보정) × ② 낙찰가 배수(경매 보정) · 회차별 ${M.nSim.toLocaleString()}회 계산 · 지가변동률 ${pr.market.month} 기준${pr.market.capped ? "(최신값)" : ""} · 최근 공매 낙찰 ${pr.recent.months.slice(-1)[0] || ""}~${pr.recent.months[0] || ""}</p>
     ${miss.length ? `<div class="alert"><b>비어 있음:</b> ${miss.join(", ")}${miss.includes("공시지가") ? ". 공시지가가 없으면 예측 오차가 커져요 (검증에서 14%p → 20%p)." : ""}</div>` : ""}
-    ${BIAS[p.usage6] ? `<div class="alert"><b>참고:</b> ${p.usage6}는 2026년 10월 대구·경북 경매에서 실제보다 평균 ${BIAS[p.usage6]}%p 높게 예측됐어요.</div>` : ""}`;
+    ${BIAS[p.usage6] ? `<div class="alert"><b>참고:</b> ${p.usage6}는 2026년 10월 대구·경북 경매에서 실제보다 평균 ${BIAS[p.usage6]}%p 높게 예측됐어요.</div>` : ""}
+    ${!pr.minPriceGiven && !(p.fails > 0) ? `<p class="note">현재 최저가를 비워 두어 <b>경매 시작 전(최저가 = 감정가)</b> 기준으로 계산했어요.</p>` : ""}`;
+}
+/** 회차표: 최저가율 · 이번 회차에 팔릴 확률 · 그 회차에서 끝날 확률 · 팔린다면 낙찰가율 P50 */
+function roundsHTML(pr) {
+  const p = state.prop, show = pr.rounds.filter((r, i) => i < 5 || pr.byRound[i] >= 0.005);
+  const rows = show.map((r, i) => `<tr><td>${r.round}회차</td><td class="n">${pct(r.rto / 100, 0)}<div class="hint">${won(r.rto / 100 * p.apsl)}</div></td>
+      <td class="n">${pct(r.p, 0)}</td><td class="n">${pct(pr.byRound[r.round - 1], 0)}</td><td class="n">${pct(r.rto / 100 * Math.exp(r.P[1]), 0)}</td></tr>`).join("");
+  return `<div class="pnums"><div><span>시작 최저가</span><b class="num">${pct(pr.startRto / 100, 0)}</b><small class="num">${won(pr.startRto / 100 * p.apsl)}${pr.minPriceGiven ? "" : " (계산값)"}</small></div>
+      <div><span>예상 회차</span><b class="num">${Number.isFinite(pr.expRound) ? pr.expRound.toFixed(1) + "회" : "—"}</b><small>팔리기까지</small></div>
+      <div><span>${M.maxRounds}회 안에 미매각</span><b class="num">${pct(pr.unsold, 1)}</b><small>이 경우는 배당 계산에서 빠짐</small></div></div>
+    <div class="tbl-wrap"><table class="sens"><thead><tr><th>회차</th><th class="n">최저가</th><th class="n">이번에 팔릴 확률</th><th class="n">여기서 끝날 확률</th><th class="n">팔린다면 P50</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function orderHTML() {
   const b = R.built; if (!b) return "";
@@ -810,7 +824,8 @@ function renderResult() {
        <div class="row-actions"><a class="btn pri" href="#${missingProp().length ? "property" : "sinbo"}">입력하러 가기</a><a class="btn" href="#tests">테스트 사례로 둘러보기</a></div></div>`;
   if (!ok) return;
   const { built, mc, sens, be } = R, sm = mc.summary, p = state.prop;
-  $("#lead").innerHTML = `신보 채권 <em>${won(built.B)}</em> 중 보통 <em>${won(sm.median)}</em>을 돌려받고, 한 푼도 못 받을 확률은 <em>${pct(sm.zero, 0)}</em>예요.`;
+  $("#lead").innerHTML = `신보 채권 <em>${won(built.B)}</em> 중 보통 <em>${won(sm.median)}</em>을 돌려받고, 한 푼도 못 받을 확률은 <em>${pct(sm.zero, 0)}</em>예요.` +
+    (R.pred && R.pred.unsold >= 0.005 ? ` <span class="cap">(${M.maxRounds}회차 안에 안 팔릴 확률 ${pct(R.pred.unsold, 1)}은 빼고 계산)</span>` : "");
   $("#kpis").innerHTML = `
     <div class="kpi"><span>예상 회수액 (중앙값)</span><b class="num">${won(sm.median)}</b><small>평균 ${won(sm.mean)}</small></div>
     <div class="kpi ${sevOf(sm.zero)}"><span>0원 확률</span><b class="num">${pct(sm.zero, 0)}</b><small>1만 회 중 ${Math.round(sm.zero * 10000).toLocaleString()}회</small></div>
@@ -941,6 +956,7 @@ function renderSteps() {
   const miss = new Set(missingProp().map(([k]) => k));
   $$("[data-req]").forEach((f) => f.classList.toggle("missing", (miss.has(f.dataset.req) && touched.has(f.dataset.req)) || (f.dataset.req === "samt" && touched.has("samt") && !sinboReady())));
   for (const k of ["apsl", "sale"]) { const el = $(`[data-hint="${k}"]`); if (el) el.textContent = p[k] ? won(p[k]) : ""; }
+  { const el = $(`[data-hint="minPrice"]`); if (el) el.textContent = p.minPrice > 0 ? won(p.minPrice) + (p.apsl > 0 ? ` · 감정가의 ${pct(p.minPrice / p.apsl, 1)}` : "") : (p.apsl > 0 ? `비우면 ${won(p.apsl * Math.pow(0.7, Math.max(0, Math.trunc(p.fails || 0))))} (감정가 × 0.7^${Math.max(0, Math.trunc(p.fails || 0))})` : ""); }
   $("#bldGrid").hidden = !p.hasBld; $("#bldOff").hidden = !!p.hasBld;
   $$("[data-pred]").forEach((el) => { el.innerHTML = predHTML(); });
   const chip = R.pred ? `${p.usage6} · 감정가 ${won(p.apsl)}` : "";
@@ -981,17 +997,17 @@ function renderSteps() {
   $("#taxApplies").textContent = R.built && R.built.taxNeeded ? "이 사건엔 금액을 모르는 세금 압류가 있어 적용돼요." : "이 사건엔 금액을 모르는 세금 압류가 없어 적용되지 않아요.";
   $("#taxQuick").innerHTML = R.mc && R.built.taxNeeded ? `<div class="tbl-wrap"><table class="sens">${taxRows(R.mc, R.mcAlt)}</table></div>` : `<p class="cap">금액을 모르는 세금 압류가 있으면 여기서 시나리오별 차이를 보여줘요.</p>`;
   $("#foot").textContent = `모델: 온비드 공매 ${M.train_rows ? M.train_rows.toLocaleString() + "건" : ""} 학습 (~${M.train_until || ""}) · 공매→경매 보정 (${M.method})` +
-    (EV ? ` · ${EV.period} ${EV.n}건 검증 (학습 기간과 안 겹침): P50 오차 ${EV.mae.toFixed(1)}%p, P10~P90 포함 ${pct(EV.coverage, 0)}, 실제가 P50 아래 ${pct(EV.below_p50, 0)} · P10 아래 ${pct(EV.below_p10, 1)} · P90 위 ${pct(EV.above_p90, 1)}` : "") +
+    (EV ? ` · ${EV.period} ${EV.n}건 검증 (학습에 안 씀): P50 오차 ${EV.mae.toFixed(1)}%p, P10~P90 포함 ${pct(EV.coverage, 0)}, 실제가 P50 아래 ${pct(EV.below_p50, 0)} · P10 아래 ${pct(EV.below_p10, 1)} · P90 위 ${pct(EV.above_p90, 1)}` : "") +
     ` · 데이터 기준 ${DATA.built} · 입력 내용은 이 브라우저에만 저장돼요`;
 }
 function renderTests() {
   const q = ($("#testQ").value || "").trim(), btn = $("#testUse [aria-pressed='true']"), use = btn ? btn.dataset.use : "전체";
   const rows = DATA.cases.filter((c) => (use === "전체" || c.prop.usage6 === use) && (!q || `${c.court} ${c.key} ${c.addr}`.includes(q)));
-  $("#testTbl").innerHTML = `<thead><tr><th>사건</th><th>용도</th><th>소재지</th><th class="n">감정가</th><th class="n">실제 매각가</th><th class="n">권리·임차인</th><th></th></tr></thead><tbody>` +
+  $("#testTbl").innerHTML = `<thead><tr><th>사건</th><th>용도</th><th>소재지</th><th class="n">감정가</th><th class="n">10월 최저가</th><th class="n">실제 매각가</th><th class="n">권리·임차인</th><th></th></tr></thead><tbody>` +
     rows.map((c) => `<tr><td>${esc(c.court)}<br><b>${esc(c.key)}</b></td><td>${esc(c.use)}</td><td style="min-width:200px">${esc(c.addr)}</td>
-      <td class="n">${won(c.apsl)}</td><td class="n">${won(c.sale)}<div class="hint">${pct(c.sale / c.apsl, 0)}</div></td>
+      <td class="n">${won(c.apsl)}</td><td class="n">${won(c.prop.minPrice)}<div class="hint">유찰 ${c.prop.fails ?? "—"}회</div></td><td class="n">${won(c.sale)}<div class="hint">${pct(c.sale / c.apsl, 0)}</div></td>
       <td class="n">${c.rights.length} · ${c.tenants.length}</td><td><button class="btn sm" type="button" data-load="${esc(c.key)}">불러오기</button></td></tr>`).join("") +
-    (rows.length ? "" : `<tr><td colspan="7" class="empty">찾는 사례가 없어요.</td></tr>`) + "</tbody>";
+    (rows.length ? "" : `<tr><td colspan="8" class="empty">찾는 사례가 없어요.</td></tr>`) + "</tbody>";
 }
 function renderAll() { compute(); renderSide(); renderSteps(); renderHints(); if (current === "result") renderResult(); }
 

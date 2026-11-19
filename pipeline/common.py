@@ -1,15 +1,18 @@
-"""공통 설정·함수 (코랩 노트북 4개에서 같이 쓰던 부분을 한 곳에 모음)
+"""공통 설정·함수 — 최종 낙찰가 모델 (2단계 구조: ① 매각확률 × ② 낙찰가 배수)
+
+기존 pipeline/common.py (공매 낙찰가율 모델) 를 최종 모델에 맞춰 바꾼 파일.
 
 폴더 구조 (이 파일 기준):
-    신보프로젝트/
-      data/                       ← 원본 데이터 (팀이 준 것, 읽기만 함)
-      매각통계/                    ← 법원 매각통계 12개
-      지역별 지가지수, 지가변동률/   ← R-ONE 2개
-      pipeline/                   ← 이 코드
-      output/                     ← 실행 결과 (model_out / calib_out / dividend_out)
+    (프로젝트 맨 위)
+      data/                ← 입력 데이터 (읽기만 함)
+      매각통계/  지역별 지가지수, 지가변동률/
+      pipeline/            ← 이 코드
+      dashboard/           ← 시뮬레이터 화면 템플릿 (7단계가 사용)
+      output/              ← 실행 결과 (단계별 폴더)
+      settings.json        ← 배당 계산 가정값
 """
-import os
 import json
+import os
 import unicodedata
 from pathlib import Path
 
@@ -17,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 # ───────────────────────── 경로 ─────────────────────────
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent          # 프로젝트 맨 위
 
 
 def nfc(s):
@@ -25,7 +28,7 @@ def nfc(s):
 
 
 def sub(parent, *parts):
-    """macOS·드라이브에서 한글 파일명 정규화(NFC/NFD)가 달라도 찾아줌"""
+    """한글 파일명 정규화(NFC/NFD)가 달라도 찾아줌"""
     p = Path(parent)
     for part in parts:
         hit = [q for q in p.iterdir() if nfc(q.name) == nfc(part)] if p.exists() else []
@@ -37,27 +40,51 @@ DATA_DIR = sub(ROOT, "data")
 STAT_DIR = sub(ROOT, "매각통계")
 LAND_DIR = sub(ROOT, "지역별 지가지수, 지가변동률")
 OUT_ROOT = Path(os.environ.get("SINBO_OUT", ROOT / "output"))
-MODEL_DIR = OUT_ROOT / "model_out"
-CALIB_DIR = OUT_ROOT / "calib_out"
-DIV_DIR = OUT_ROOT / "dividend_out"
-for d in (MODEL_DIR, CALIB_DIR, DIV_DIR):
+PREP_DIR = OUT_ROOT / "01_데이터정리"
+SELL_DIR = OUT_ROOT / "02_매각확률"
+MULT_DIR = OUT_ROOT / "03_낙찰가배수"
+CALIB_DIR = OUT_ROOT / "04_경매시험"          # 배당 엔진이 여기의 auction_predictions.csv 를 읽음
+DIV_DIR = OUT_ROOT / "05_배당회수액"
+MODEL_DIR = MULT_DIR                          # (기존 코드 호환용 이름)
+for d in (PREP_DIR, SELL_DIR, MULT_DIR, CALIB_DIR, DIV_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
+# ───────────────────────── 분석 설정 (어제 정한 분석 프로세스) ─────────────────────────
+H = 1                                   # 예측 거리(개월). 1 = 경매 진행 중(다음 기일 약 1달 뒤). 시작 전을 보려면 6
+RONE_PUB_LAG = 1                        # 지가변동률 공표 시차(개월) → 실제 지연 = H + RONE_PUB_LAG
+CV_MONTHS = ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"]   # 롤링 CV 평가 월
+TEST_MONTH = "2026-10"                  # 최종 test (한 번만 채점)
+FINAL_TRAIN_END = "2026-09-30"          # 최종 모델 학습 마감 (10월 경매 시험셋과 겹치지 않게)
 QS = [0.1, 0.5, 0.9]
-# 건물 없는 물건(토지)의 건물면적: 학습 데이터(온비드)는 0, 노트북은 예측 때 빈칸(NaN). 기본값은 노트북과 같게 False.
-# True로 바꾸면 학습 데이터와 같은 0으로 예측 (경매 219건 MAE 14.09%p → 13.90%p)
-LAND_BLD_AS_ZERO = False
-Y_RANGE = (0.05, 1.5)          # 낙찰가율 극단값 기준 (공매 학습·경매 평가 동일)
+Y_RANGE = (0.05, 1.5)                   # 낙찰가율 극단값 기준 (공매·경매 동일)
+MULT_RANGE = (0.5, 20.0)                # 낙찰가 ÷ 최저가 극단값 기준
+AUCTION_DROP = 0.7                      # 대구지방법원 유찰 1회당 최저가 저감 (30%)
+SEED = 42
 USAGES = ["아파트", "기타주거", "상가·업무", "공장·창고", "대지", "농지·임야"]
 LAND_USAGES = ["대지", "농지·임야"]
 BLDG_USAGES = ["아파트", "기타주거", "상가·업무", "공장·창고"]
+SINBO_USAGE = ["공장·창고", "상가·업무", "대지", "농지·임야"]
+PRPT_MAP = {"압류재산": "압류", "기타일반재산": "기타일반"}
+LGB_FIXED = dict(subsample=0.8, subsample_freq=1, colsample_bytree=0.8, reg_lambda=1.0,
+                 random_state=SEED, verbose=-1, n_jobs=1)          # n_jobs=1: 실행할 때마다 같은 결과
 
 
-def latest_train_csv():
-    fs = sorted(p for p in DATA_DIR.iterdir() if nfc(p.name).startswith("train_features_") and p.suffix == ".csv")
-    if not fs:
-        raise FileNotFoundError(f"{DATA_DIR} 에 train_features_*.csv 가 없어요.")
-    return fs[-1]
+def save_booster(booster, path):
+    """LightGBM 모델 저장. Windows 에서 한글 경로(02_매각확률 …)는 LightGBM 이 직접 못 열어서 파이썬으로 씀"""
+    Path(path).write_text(booster.model_to_string(), encoding="utf-8")
+
+
+def read_booster(path):
+    """LightGBM 모델 읽기 (한글 경로 대응: 파이썬으로 읽어서 문자열로 넘김)"""
+    import lightgbm as lgb
+    return lgb.Booster(model_str=Path(path).read_text(encoding="utf-8"))
+
+
+def data_file(name):
+    p = sub(DATA_DIR, name)
+    if not p.exists():
+        raise FileNotFoundError(f"{p} 가 없어요. data 폴더를 확인하세요.")
+    return p
 
 
 # ───────────────────────── 용도 6묶음 ─────────────────────────
@@ -66,7 +93,7 @@ LAND_DAEJI = ("대지", "잡종지", "주차장", "주유소용지", "종교용�
 
 
 def usage6(m, s):
-    """온비드 (중분류, 소분류) → 용도 6묶음"""
+    """온비드 (중분류, 소분류) → 용도 6묶음 (기존과 동일)"""
     s = str(s)
     if s == "아파트":
         return "아파트"
@@ -79,34 +106,34 @@ def usage6(m, s):
     return "상가·업무"
 
 
-def load_gongmae(verbose=True):
-    """온비드 학습 표 → 정리된 DataFrame (중복·결측·극단값 제거, usage6/prpt/분기 추가)"""
-    path = latest_train_csv()
-    raw = pd.read_csv(path, low_memory=False, dtype={"sgg_cd": str, "pnu": str})
-    df = raw.copy()
-    df["opbd_date"] = pd.to_datetime(df["opbd_date"], errors="coerce")
-    df = df.dropna(subset=["opbd_date", "y_ratio", "apslEvlAmt"])
-    df = df.sort_values("opbd_date").drop_duplicates("cltrMngNo", keep="last")
-    n0 = len(df)
-    df = df[df["y_ratio"].between(*Y_RANGE)].copy()
-    df["usage6"] = [usage6(m, s) for m, s in zip(df["cltrUsgMclsCtgrNm"], df["cltrUsgSclsCtgrNm"])]
-    df["prpt"] = df["prptDivNm"].map({"압류재산": "압류", "기타일반재산": "기타일반"}).fillna("기타")
-    df["opbd_qtr"] = df["opbd_date"].dt.quarter
-    if verbose:
-        print(f"입력: {nfc(path.name)}  {len(raw)} → 중복·결측 정리 {n0} → 극단값 정리 {len(df)}건")
-    return df
+SIDO_GRP = {"광주광역시": "광주·전남", "전라남도": "광주·전남", "전남광주통합특별시": "광주·전남"}
 
 
-# ───────────────────────── R-ONE 지가변동률 ─────────────────────────
+def sido_grp_of(sido):
+    return SIDO_GRP.get(sido, sido)
+
+
+def split_addr(a):
+    """주소 → (시도, 시군구). '대구광역시 달서구', '경상북도 포항시 북구' 처리 (가려진 주소 '* ' 도 시도·시군구까지는 읽음)"""
+    p = [w for w in str(a).replace("*", " ").split() if w]
+    sido = p[0] if p else None
+    sgg = None
+    if len(p) > 1:
+        sgg = p[1]
+        if len(p) > 2 and p[1].endswith("시") and p[2].endswith("구"):
+            sgg = f"{p[1]} {p[2]}"
+    return sido, sgg
+
+
+# ───────────────────────── R-ONE 지가변동률 (기존 함수, 지연 개월을 인자로) ─────────────────────────
 SIDO_SHORT = {"서울특별시": "서울", "부산광역시": "부산", "대구광역시": "대구", "인천광역시": "인천",
               "광주광역시": "광주", "대전광역시": "대전", "울산광역시": "울산", "세종특별자치시": "세종",
               "경기도": "경기", "강원특별자치도": "강원", "강원도": "강원", "충청북도": "충북",
               "충청남도": "충남", "전북특별자치도": "전북", "전라북도": "전북", "전라남도": "전남",
-              "경상북도": "경북", "경상남도": "경남", "제주특별자치도": "제주"}
+              "전남광주통합특별시": "전남", "경상북도": "경북", "경상남도": "경남", "제주특별자치도": "제주"}
 
 
 def read_rone(fname, kind):
-    """R-ONE 넓은 표 → (시도, 시군구, 구, 월, 값) 긴 표"""
     t = pd.read_csv(sub(LAND_DIR, fname), encoding="cp949", header=None)
     hdr_m, hdr_k = t.iloc[0], t.iloc[1]
     body = t.iloc[3:] if kind == "rate" else t.iloc[2:]
@@ -128,18 +155,14 @@ _RONE = None
 def rone_tables():
     global _RONE
     if _RONE is None:
-        if not sub(LAND_DIR, "(월) 지역별 지가변동률.csv").exists():
-            _RONE = ({}, {})
-        else:
-            rate = read_rone("(월) 지역별 지가변동률.csv", "rate")
-            idx = read_rone("(월) 지역별 지가지수.csv", "index")
-            _RONE = ({(r.a, r.b, r.c, r.ym): r.v for r in rate.itertuples()},
-                     {(r.a, r.b, r.c, r.ym): r.v for r in idx.itertuples()})
+        rate = read_rone("(월) 지역별 지가변동률.csv", "rate")
+        idx = read_rone("(월) 지역별 지가지수.csv", "index")
+        _RONE = ({(r.a, r.b, r.c, r.ym): r.v for r in rate.itertuples()},
+                 {(r.a, r.b, r.c, r.ym): r.v for r in idx.itertuples()})
     return _RONE
 
 
 def region_keys(sido, sgg):
-    """(시도, 시군구) → R-ONE에서 찾을 후보 키 (구 → 시 → 시도 순)"""
     a = SIDO_SHORT.get(sido, sido)
     if not isinstance(sgg, str) or not sgg.strip():
         return [(a, a, a)]
@@ -149,36 +172,33 @@ def region_keys(sido, sgg):
     return [(a, parts[0], parts[0]), (a, a, a)]
 
 
-def attach_market(frame, lag=2, verbose=False):
-    """매각 월의 2개월 전 월간 변동률(lr_1m), 그 시점까지 6개월 누적(lr_6m) — 발표 시차 누수 방지"""
+def attach_market(frame, date_col="opbd_date", lag=None):
+    """예측 시점에 알 수 있던 지가변동률만 붙임: 매각월 − (H + 공표시차) 개월의 월 변동률(lr_1m),
+    그 시점까지 3·6·12개월 누적(lr_3m·lr_6m·lr_12m). 기존 코드는 lag=2 고정이었음 (= H 1 + 공표 1)."""
+    lag = H + RONE_PUB_LAG if lag is None else lag
     rate_d, idx_d = rone_tables()
-    lr1, lr6, hit = [], [], []
-    for sido, sgg, d in zip(frame["sido"], frame["sgg"], frame["opbd_date"]):
-        m = d.to_period("M") - lag
-        v1 = v6 = None
-        lvl = None
-        for k, key in enumerate(region_keys(sido, sgg)):
-            if v1 is None and (key + (m,)) in rate_d:
-                v1 = rate_d[key + (m,)]
-                lvl = k
-            if v6 is None and (key + (m,)) in idx_d and (key + (m - 6,)) in idx_d:
-                v6 = (idx_d[key + (m,)] / idx_d[key + (m - 6,)] - 1) * 100
-        lr1.append(v1); lr6.append(v6); hit.append(lvl)
+    out = {k: [] for k in ["lr_1m", "lr_3m", "lr_6m", "lr_12m"]}
+    for sido, sgg, d in zip(frame["sido"], frame["sgg"], frame[date_col]):
+        if pd.isna(d):
+            for k in out: out[k].append(None)
+            continue
+        m = pd.Timestamp(d).to_period("M") - lag
+        v = {k: None for k in out}
+        for key in region_keys(sido, sgg):
+            if v["lr_1m"] is None and (key + (m,)) in rate_d:
+                v["lr_1m"] = rate_d[key + (m,)]
+            for n in (3, 6, 12):
+                k = f"lr_{n}m"
+                if v[k] is None and (key + (m,)) in idx_d and (key + (m - n,)) in idx_d:
+                    v[k] = (idx_d[key + (m,)] / idx_d[key + (m - n,)] - 1) * 100
+        for k in out: out[k].append(v[k])
     frame = frame.copy()
-    frame["lr_1m"] = pd.to_numeric(pd.Series(lr1, index=frame.index), errors="coerce")
-    frame["lr_6m"] = pd.to_numeric(pd.Series(lr6, index=frame.index), errors="coerce")
-    if verbose:
-        h = pd.Series(hit).map({0: "시군구/구", 1: "시", 2: "시도"}).fillna("없음")
-        print("지가변동률 연결 수준:", h.value_counts().to_dict())
+    for k, vals in out.items():
+        frame[k] = pd.to_numeric(pd.Series(vals, index=frame.index), errors="coerce")
     return frame
 
 
-# ───────────────────────── 모델 피처 / 예측 ─────────────────────────
-NUM = ["log_apsl", "landSqms", "bldSqms", "has_building", "log_land_price", "apsl_to_official",
-       "bld_age_c", "bld_grnd_flr", "bld_tot_area", "is_daegu_gb", "opbd_qtr", "lr_1m", "lr_6m"]
-CAT_BASE = ["usage6", "sido_grp", "bld_strct", "bld_purps"]
-
-
+# ───────────────────────── 피처 표 (기존 make_X 방식: 범주 → 목록 번호) ─────────────────────────
 def _cat_str(v):
     if v is None or (isinstance(v, float) and np.isnan(v)) or v is pd.NA or v is pd.NaT:
         return "없음"
@@ -186,12 +206,9 @@ def _cat_str(v):
     return "없음" if t in ("nan", "<NA>", "None", "NaT") else t
 
 
-def make_X(frame, cats, categories=None):
-    """피처 표. 범주형은 pandas Categorical 대신 '범주 목록에서의 번호'(없는 값은 NaN)로 직접 바꿈
-    → pandas 버전(2.x/3.x)에 따라 범주 처리가 달라져 예측이 바뀌는 문제를 막음. 브라우저(engine.js)도 같은 방식.
-    categories 를 주면 그 목록(학습 때 model_meta.json 에 저장한 것)을 쓰고, 없으면 값을 정렬해 새로 만듦.
-    만든 목록은 X.attrs["categories"] 에 담김."""
-    X = frame[NUM].apply(pd.to_numeric, errors="coerce").astype(float)
+def make_X(frame, num, cats, categories=None):
+    """숫자 피처 + 범주 피처(학습 때 범주 목록의 번호, 없는 값은 NaN). categories 를 주면 그 목록 사용."""
+    X = frame[num].apply(pd.to_numeric, errors="coerce").astype(float)
     used = {}
     for c in cats:
         vals = [_cat_str(v) for v in frame[c].tolist()]
@@ -203,63 +220,71 @@ def make_X(frame, cats, categories=None):
     return X
 
 
-class AuctionModel:
-    """저장된 공매 모델(P10/P50/P90) + CQR + 공매→경매 보정 계수를 묶어서 경매 낙찰가율을 예측"""
-
-    def __init__(self, model_dir=MODEL_DIR, calib_dir=CALIB_DIR):
-        import lightgbm as lgb
-        self.meta = json.load(open(Path(model_dir) / "model_meta.json", encoding="utf-8"))
-        self.boosters = {q: lgb.Booster(model_file=str(Path(model_dir) / f"lgb_q{int(q * 100)}.txt")) for q in QS}
-        cp = Path(calib_dir) / "calibration.json"
-        self.calib = json.load(open(cp, encoding="utf-8")) if cp.exists() else None
-
-    def predict_gongmae(self, frame, prpt_value=None):
-        """공매 기준 P10/P50/P90 (정렬 + CQR 적용). prpt_value 를 주면 재산유형을 그 값으로 고정"""
-        f = frame.copy()
-        if prpt_value is not None:
-            f["prpt"] = prpt_value
-        X = make_X(f, self.meta["features_cat"], self.meta["categories"])
-        # 숫자 배열로 넘김: 범주는 이미 meta 목록의 번호. 예전(pandas Categorical) 방식으로 학습한 팀 모델도 같은 번호를 씀
-        P = np.sort(np.column_stack([self.boosters[q].predict(X.to_numpy(dtype=float)) for q in QS]), axis=1)
-        d = f["usage6"].map(self.meta.get("cqr_by_usage") or {}).fillna(self.meta["cqr_delta"]).values
-        P[:, 0] -= d
-        P[:, 2] += d
-        return P
-
-    def predict_auction(self, frame):
-        """경매 기준 P10/P50/P90 = 공매 예측(용도별 재산유형 고정) × 용도별 보정 계수"""
-        if self.calib is None:
-            raise FileNotFoundError("calibration.json 이 없어요. step2_calibration.py 를 먼저 실행하세요.")
-        P = np.zeros((len(frame), 3))
-        for u in frame["usage6"].unique():
-            m = (frame["usage6"] == u).values
-            P[m] = self.predict_gongmae(frame[m], self.calib["fix_prpt_by_usage"][u])
-        fac = frame["usage6"].map(self.calib["factors"]).values[:, None]
-        return np.clip(P * fac, 0, None)
-
-
 # ───────────────────────── 평가 지표 ─────────────────────────
 def pinball(y, p, q):
-    e = y - p
-    return np.mean(np.maximum(q * e, (q - 1) * e))
+    e = np.asarray(y) - np.asarray(p)
+    return float(np.mean(np.maximum(q * e, (q - 1) * e)))
 
 
-def evaluate(name, y, P):
-    P = np.sort(P, axis=1)
-    return {"모델": name, "n": len(y),
-            "MAE(P50, %p)": np.mean(np.abs(y - P[:, 1])) * 100,
-            "포함률(P10~P90)": np.mean((y >= P[:, 0]) & (y <= P[:, 2])),
-            "구간폭(%p)": np.mean(P[:, 2] - P[:, 0]) * 100,
-            "pinball": np.mean([pinball(y, P[:, i], q) for i, q in enumerate(QS)])}
+def interval_score(y, lo, hi, alpha=0.2):
+    """구간 폭 + 벗어난 만큼 × 2/α (넓게 잡으면 폭 벌점, 좁게 잡아 놓치면 이탈 벌점). α=0.2 → P10~P90"""
+    y, lo, hi = map(np.asarray, (y, lo, hi))
+    return float(np.mean((hi - lo) + 2 / alpha * (lo - y) * (y < lo) + 2 / alpha * (y - hi) * (y > hi)))
 
 
-def by_group(frame, y, P, col):
-    P = np.sort(P, axis=1)
-    g = pd.DataFrame({"g": frame[col].values, "y": y, "p10": P[:, 0], "p50": P[:, 1], "p90": P[:, 2]})
-    return g.groupby("g").apply(lambda s: pd.Series({
-        "n": len(s), "MAE(%p)": np.mean(np.abs(s.y - s.p50)) * 100,
-        "포함률": np.mean((s.y >= s.p10) & (s.y <= s.p90))}), include_groups=False).round(3)
+def eval_quantile(name, y, P, w=None):
+    """분위수 예측 채점 (y·P 는 낙찰가율 = 낙찰가 ÷ 감정가 단위로 통일)"""
+    P = np.sort(np.asarray(P, dtype=float), axis=1)
+    y = np.asarray(y, dtype=float)
+    out = {"모델": name, "n": len(y),
+           "MAE(P50,%p)": np.mean(np.abs(y - P[:, 1])) * 100,
+           "RMSE(P50,%p)": np.sqrt(np.mean((y - P[:, 1]) ** 2)) * 100,
+           "R2(P50)": 1 - np.sum((y - P[:, 1]) ** 2) / np.sum((y - y.mean()) ** 2) if len(y) > 1 else np.nan,
+           "pinball": np.mean([pinball(y, P[:, i], q) for i, q in enumerate(QS)]),
+           "interval_score": interval_score(y, P[:, 0], P[:, 2]),
+           "구간폭(%p)": np.mean(P[:, 2] - P[:, 0]) * 100,
+           "포함률(P10~P90)": np.mean((y >= P[:, 0]) & (y <= P[:, 2])),
+           "P10아래": np.mean(y < P[:, 0]), "P50아래": np.mean(y < P[:, 1]), "P90아래": np.mean(y < P[:, 2]),
+           "평균치우침(P50-실제,%p)": np.mean(P[:, 1] - y) * 100}
+    if w is not None:
+        w = np.asarray(w, dtype=float)
+        out["Σ예측/Σ감정가"] = float((P[:, 1] * w).sum() / w.sum())
+        out["Σ실제/Σ감정가"] = float((y * w).sum() / w.sum())
+    return out
 
 
-def show(df):
-    print(df.round(3).to_string(index=False) if isinstance(df, pd.DataFrame) else df)
+def eval_prob(name, y, p, thr=0.5):
+    """매각확률 채점: AUC, Brier, log loss, 정확도·F1 (보조)"""
+    from sklearn.metrics import roc_auc_score, brier_score_loss, log_loss, accuracy_score, f1_score
+    y = np.asarray(y).astype(int)
+    p = np.clip(np.asarray(p, dtype=float), 1e-6, 1 - 1e-6)
+    return {"모델": name, "n": len(y), "실제 매각률": y.mean(), "평균 예측확률": p.mean(),
+            "AUC": roc_auc_score(y, p) if len(set(y)) > 1 else np.nan,
+            "Brier": brier_score_loss(y, p), "logloss": log_loss(y, p, labels=[0, 1]),
+            "정확도": accuracy_score(y, p >= thr), "F1": f1_score(y, p >= thr, zero_division=0)}
+
+
+def calib_table(y, p, bins=(0, .02, .05, .1, .2, .3, .5, .7, 1.0)):
+    """보정 곡선: 예측확률 구간별 실제 매각률"""
+    t = pd.DataFrame({"y": np.asarray(y).astype(int), "p": np.asarray(p, dtype=float)})
+    t["구간"] = pd.cut(t["p"], bins, include_lowest=True)
+    return t.groupby("구간", observed=True).agg(n=("y", "size"), 평균예측=("p", "mean"), 실제매각률=("y", "mean")).reset_index()
+
+
+def by_group_q(frame, y, P, col):
+    P = np.sort(np.asarray(P, dtype=float), axis=1)
+    rows = []
+    for g, idx in frame.groupby(col).indices.items():
+        r = eval_quantile(g, np.asarray(y)[idx], P[idx])
+        rows.append({col: g, "n": r["n"], "MAE(%p)": r["MAE(P50,%p)"], "치우침(%p)": r["평균치우침(P50-실제,%p)"],
+                     "포함률": r["포함률(P10~P90)"], "구간폭(%p)": r["구간폭(%p)"]})
+    return pd.DataFrame(rows)
+
+
+def show(df, n=None):
+    df = df if n is None else df.head(n)
+    print(df.round(4).to_string(index=False) if isinstance(df, pd.DataFrame) else df)
+
+
+def save_json(obj, path):
+    json.dump(obj, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=float)

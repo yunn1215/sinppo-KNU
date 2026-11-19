@@ -7,3 +7,11 @@ __pycache__/
 ~$*
 # 테스트 중 생긴 빈 폴더
 pipeline/output/
+# Node 패키지 (설치하면 생김)
+node_modules/
+# 로컬 작업본 — 내용은 pipeline/·dashboard/·data/·output/ 에 반영됨. 올리지 않음
+최종/
+최종.zip
+NEW_실사례검증_claude_*/
+# 실행 로그 (실행할 때마다 덧붙여짐)
+output/run_log.txt

@@ -780,13 +780,15 @@
       const rto = startRto * Math.pow(M2.drop, k);
       const fk = { ...f, rto, 누적_유찰횟수: Math.max(0, roundHalfEven((100 - rto) / 10)) };
       const pG = sigmoid(treeSum(S.trees, vectorize(S, fk, prpt)));            // 공매 transfer 모델
-      const pA = sigmoid(A.platt[0] + A.platt[1] * logit(pG));                  // 경매 재보정
+      const kA = Math.min(M2.kMax, Math.max(0, roundHalfEven(Math.log(Math.max(rto, 1e-6) / 100) / Math.log(M2.drop))));  // 경매 유찰 횟수
+      const pA = A.plattK ? sigmoid(A.plattK.a + A.plattK.b * logit(pG) + A.plattK.k[kA])   // 경매 재보정 + 유찰 횟수
+                          : sigmoid(A.platt[0] + A.platt[1] * logit(pG));                   // 경매 재보정만
       const xq = vectorize(Q, fk, prpt);
       let P = QS.map((q) => treeSum(Q.trees[q], xq)).sort((a, b) => a - b);
       P = [P[0] - d[0], P[1], P[2] + d[1]].sort((a, b) => a - b);               // CQR (롤링 예측으로 정한 폭)
       P = P.map((v) => v + s);                                                  // 공매→경매 용도군 이동폭
       P = [P[0] - A.widen[0], P[1], P[2] + A.widen[1]].sort((a, b) => a - b);   // 경매 구간 보정
-      out.push({ round: k + 1, rto, pGongmae: pG, p: pA, P });
+      out.push({ round: k + 1, rto, auctionFails: kA, pGongmae: pG, p: pA, P });
     }
     return out;
   }

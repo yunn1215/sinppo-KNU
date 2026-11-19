@@ -121,7 +121,7 @@ def export_model():
             "trees": {str(q): dump_trees(MULT_DIR / f"mult_q{int(q * 100)}.txt", mm["num"], mm["cats"]) for q in QS},
             "cqr_all": mm["cqr_all"], "cqr_by_usage": mm["cqr_by_usage"]}
     shift = {"groups": sh["shift_groups"], "logByGroup": sh["shift_log_by_group"], "widen": sh["widen_log"],
-             "platt": sh["sell_platt"]}
+             "platt": sh["sell_platt"], "plattK": sh.get("sell_platt_k")}
     # 경고 문구용: 4단계 사건 교차 추정 예측으로 낸 경매 검증 숫자 (예측을 보정하는 데 쓰지 않음)
     ap = pd.read_csv(CALIB_DIR / "auction_predictions.csv")
     ap = ap[ap["y"].notna()]
@@ -131,10 +131,10 @@ def export_model():
           "coverage": float(np.mean((ap["y"] >= ap["p10"]) & (ap["y"] <= ap["p90"]))),
           "bias_by_usage": {u: float(np.mean(s["p50"] - s["y"]) * 100) for u, s in ap.groupby("usage6")}}
     return {"kind": "final_v1", "prpt": prpt, "drop": AUCTION_DROP, "maxRounds": S6.MAX_ROUNDS, "nSim": N_SIM_WEB,
-            "lag": H + RONE_PUB_LAG, "sell": sell, "mult": mult, "shift": shift, "recent": recent_tables(prpt),
+            "lag": H + RONE_PUB_LAG, "kMax": sh.get("sell_k_max", 5), "sell": sell, "mult": mult, "shift": shift, "recent": recent_tables(prpt),
             # 기존 화면 코드가 쓰는 항목 (구조·주용도 목록, PDF 읽기, 바닥글)
             "categories": mm["categories"], "train_rows": mm["train_rows"], "train_until": mm["train_until"],
-            "method": "① 매각확률 Platt 재보정 · ② 용도군 이동폭 + 구간 보정 (10월 경매 388건)", "eval": ev}
+            "method": "① 매각확률 Platt 재보정 + 유찰 횟수 · ② 용도군 이동폭 + 구간 보정 (10월 경매 388건)", "eval": ev}
 
 
 def export_rone():

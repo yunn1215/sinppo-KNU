@@ -1,4 +1,7 @@
-/* 회수 시뮬레이터 계산 엔진 — 파이썬 pipeline 과 같은 규칙
+/* 회수 시뮬레이터 계산 엔진 — 파이썬 코드와 같은 규칙
+ *  [최종 모델] predictAuction2 : ① 회차별 매각확률(transfer + 경매 재보정) × ② 낙찰가 배수(P10/P50/P90 + CQR + 경매 이동폭)
+ *                                 → 회차별 몬테카를로 (pipeline/ step4·step6 과 같은 계산)
+ *  (아래 predictAuction 은 기존 감정가 기준 모델 — 비교용으로 남겨 둠)
  *  ① predictAuction : LightGBM 나무(P10/P50/P90) → CQR → 공매→경매 보정   (common.AuctionModel, predict_new.build_features)
  *  ② buildCase      : 등기부·임차인 → 순위 그룹                          (step3_dividend.build_case)
  *  ③ waterfall      : 순위대로 채우고 남은 돈만 다음 순위로, 같은 순위는 안분 (step3_dividend.waterfall)
@@ -704,7 +707,119 @@
     return { rows, remain: remain[0] };
   }
 
-  const api = { predictAuction, buildFeatures, marketRates, regionOf, buildCase, resolveAuctionClaims, normName, mergeBooks, splitOnce, waterfall, simulate, summarize,
+
+  /* ───────── [최종 모델] ① 매각확률 × ② 낙찰가 배수, 회차별 몬테카를로 ───────── */
+  const SIDO_SHORT2 = Object.assign({}, SIDO_SHORT, { "전남광주통합특별시": "전남" });
+  const SHIFT_BLDG = ["아파트", "기타주거", "상가·업무", "공장·창고"];        // has_building = 1 (4단계 load_cases 와 같은 규칙)
+  function regionKeys2(sido, sgg) {
+    const a = SIDO_SHORT2[sido] || sido;
+    if (!sgg || !String(sgg).trim()) return [[a, a, a]];
+    const p = String(sgg).trim().split(/\s+/);
+    if (p.length >= 2) return [[a, p[0], p[1]], [a, p[0], p[0]], [a, a, a]];
+    return [[a, p[0], p[0]], [a, a, a]];
+  }
+  /** 매각월 − lag 개월의 월 변동률(lr_1m)과 3·6·12개월 누적 (common.attach_market 과 같음). 표보다 미래면 가장 최근 월 */
+  function marketRates2(rone, sido, sgg, month, lag) {
+    let m = addMonths(month, -lag);
+    const capped = m > rone.last;
+    if (capped) m = rone.last;
+    const v = { lr_1m: null, lr_3m: null, lr_6m: null, lr_12m: null };
+    for (const k of regionKeys2(sido, sgg)) {
+      const key = k.join("|");
+      if (v.lr_1m === null && rone.rate[`${key}|${m}`] !== undefined) v.lr_1m = rone.rate[`${key}|${m}`];
+      for (const n of [3, 6, 12]) {
+        const a = rone.idx[`${key}|${m}`], b = rone.idx[`${key}|${addMonths(m, -n)}`];
+        if (v[`lr_${n}m`] === null && a !== undefined && b !== undefined) v[`lr_${n}m`] = (a / b - 1) * 100;
+      }
+    }
+    for (const k in v) if (v[k] === null) v[k] = NaN;
+    return { ...v, month: m, capped };
+  }
+  /** 예측 시점 최근 공매 지표 (4단계 recent_market: 매각월 직전 3개월 낙찰 중앙값). 표보다 미래면 가장 최근 값 */
+  function recentStats(M2, usage6, month) {
+    const R = M2.recent, ks = Object.keys(R.byMonth).sort();
+    let k = month;
+    if (k > ks[ks.length - 1]) k = ks[ks.length - 1];
+    if (k < ks[0]) k = ks[0];
+    const t = R.byMonth[k] || {};
+    const g = (o) => (o && o[usage6] !== undefined && o[usage6] !== null ? o[usage6] : NaN);
+    return { r1: g(t.r1), r2: g(t.r2), month: k, months: t.months || [] };
+  }
+  const roundHalfEven = (x) => { const r = Math.round(x); return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r; };  // numpy round 와 같게
+  const logit = (p) => { const q = Math.min(Math.max(p, 1e-6), 1 - 1e-6); return Math.log(q / (1 - q)); };
+  const sigmoid = (z) => 1 / (1 + Math.exp(-z));
+
+  /** 입력 → 피처 (최저가율·유찰횟수는 회차마다 따로 넣음) */
+  function buildFeatures2(p, rone, M2) {
+    const apsl = num(p.apsl), land = num(p.land), lp = num(p.lp), bld = num(p.bld);
+    const mr = marketRates2(rone, p.sido, p.sgg, p.month, M2.lag);
+    const rs = recentStats(M2, p.usage6, p.month);
+    const hasB = SHIFT_BLDG.includes(p.usage6);
+    const f = {
+      재매각: 0, log_apsl: Math.log(apsl), landSqms: land, bldSqms: bld, has_building: hasB ? 1 : 0,
+      log_land_price: lp > 0 ? Math.log(lp) : NaN, apsl_to_official: lp > 0 && land > 0 ? apsl / (lp * land) : NaN,
+      bld_age_c: num(p.age) >= 0 ? Math.min(80, Math.max(0, num(p.age))) : NaN, bld_grnd_flr: num(p.flr), bld_tot_area: num(p.tot),
+      is_daegu_gb: p.sido === "대구광역시" || p.sido === "경상북도" ? 1 : 0,
+      opbd_qtr: Math.floor((Number(String(p.month).slice(5, 7)) - 1) / 3) + 1,
+      lr_1m: mr.lr_1m, lr_3m: mr.lr_3m, lr_6m: mr.lr_6m, lr_12m: mr.lr_12m,
+      최근_낙찰가율_용도: rs.r1, 최근_배수_용도유형: rs.r2,
+      usage6: p.usage6, sido_grp: SIDO_GRP[p.sido] || p.sido,
+      bld_strct: p.strct || null, bld_purps: p.purps || null,
+    };
+    return { f, market: mr, recent: rs };
+  }
+  const treeSum = (trees, x) => trees.reduce((s, t) => s + treeValue(t, x), 0);
+
+  /** 회차표: 회차마다 최저가율(×0.7씩), ① 경매 매각확률, ② log 배수 P10/P50/P90 (경매 보정 포함) — step6.round_table 과 같음 */
+  function roundTable(M2, f, startRto) {
+    const S = M2.sell, Q = M2.mult, A = M2.shift, prpt = M2.prpt, out = [];
+    const g = A.groups[f.usage6] || "기타";
+    const s = A.logByGroup[g] !== undefined ? A.logByGroup[g] : A.logByGroup["(전체)"];
+    const d = Q.cqr_by_usage[f.usage6] !== undefined ? Q.cqr_by_usage[f.usage6] : Q.cqr_all;
+    for (let k = 0; k < M2.maxRounds; k++) {
+      const rto = startRto * Math.pow(M2.drop, k);
+      const fk = { ...f, rto, 누적_유찰횟수: Math.max(0, roundHalfEven((100 - rto) / 10)) };
+      const pG = sigmoid(treeSum(S.trees, vectorize(S, fk, prpt)));            // 공매 transfer 모델
+      const pA = sigmoid(A.platt[0] + A.platt[1] * logit(pG));                  // 경매 재보정
+      const xq = vectorize(Q, fk, prpt);
+      let P = QS.map((q) => treeSum(Q.trees[q], xq)).sort((a, b) => a - b);
+      P = [P[0] - d[0], P[1], P[2] + d[1]].sort((a, b) => a - b);               // CQR (롤링 예측으로 정한 폭)
+      P = P.map((v) => v + s);                                                  // 공매→경매 용도군 이동폭
+      P = [P[0] - A.widen[0], P[1], P[2] + A.widen[1]].sort((a, b) => a - b);   // 경매 구간 보정
+      out.push({ round: k + 1, rto, pGongmae: pG, p: pA, P });
+    }
+    return out;
+  }
+  /** 회차별 몬테카를로 — 팔리면 낙찰가 = 최저가 × exp(배수 추출), 안 팔리면 최저가 × 0.7 로 다음 회차 */
+  function simulateRounds(rounds, n, seed) {
+    const rng = mulberry32(seed), sold = [], rnd = [];
+    for (let i = 0; i < n; i++) {
+      for (const r of rounds) {
+        if (rng() < r.p) {
+          const [a, b, c] = r.P, u = rng();
+          const v = interp(u, [0, 0.1, 0.5, 0.9, 1], [a - 0.5 * (b - a), a, b, c, c + 0.5 * (c - b)]);
+          sold.push(r.rto / 100 * Math.exp(v)); rnd.push(r.round);
+          break;
+        }
+      }
+    }
+    const s = Float64Array.from(sold).sort();
+    const byRound = rounds.map((r) => rnd.filter((x) => x === r.round).length / n);
+    return { p: s.length ? [percentile(s, 0.1), percentile(s, 0.5), percentile(s, 0.9)] : [NaN, NaN, NaN],
+      expRound: rnd.length ? rnd.reduce((a, b) => a + b, 0) / rnd.length : NaN, unsold: 1 - s.length / n, byRound, n };
+  }
+  /** 화면용: 입력 → 최종 낙찰가율 P10/P50/P90 (팔린다면) + 회차표 */
+  function predictAuction2(M2, rone, p, n, seed) {
+    const { f, market, recent } = buildFeatures2(p, rone, M2);
+    const apsl = num(p.apsl), mp = num(p.minPrice), k = Math.max(0, Math.trunc(num(p.fails) || 0));
+    const startRto = mp > 0 && apsl > 0 ? (mp / apsl) * 100 : 100 * Math.pow(M2.drop, k);
+    const rounds = roundTable(M2, f, startRto);
+    const mc = simulateRounds(rounds, n || M2.nSim, seed || 2026);
+    return { p: mc.p.map((v) => Math.max(0, v)), rounds, expRound: mc.expRound, unsold: mc.unsold, byRound: mc.byRound,
+      startRto, market, recent, features: f, minPriceGiven: mp > 0 };
+  }
+
+  const api = { predictAuction, predictAuction2, buildFeatures2, roundTable, simulateRounds, marketRates2, recentStats, roundHalfEven, buildFeatures, marketRates, regionOf, buildCase, resolveAuctionClaims, normName, mergeBooks, splitOnce, waterfall, simulate, summarize,
     breakeven, table, sinboOf, mulberry32, sampleRatios, percentile, SIDO_GRP };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Engine = api;

@@ -5,7 +5,7 @@
 <style>
 /* 레이아웃: 왼쪽 단계 메뉴(입력 1~5 → 결과, 맨 아래 테스트 사례) + 오른쪽 작업 영역(입력 폼 | 미리보기). 좁은 화면은 메뉴가 위쪽 가로 탭 */
 :root {
-  --bg: #eef1f6; --surface: #ffffff; --surface-2: #f5f7fb; --ink: #111a33; --muted: #5b647d; --line: #d8dde9;
+  --hint: #2f7480; --bg: #eef1f6; --surface: #ffffff; --surface-2: #f5f7fb; --ink: #111a33; --muted: #5b647d; --line: #d8dde9;
   --accent: #1d34b8; --accent-ink: #ffffff; --accent-soft: #e4e8fb; --band: #c5cdf4;
   --side: #0f1938; --side-ink: #e8ecfb; --side-muted: #8e99c4; --side-hover: #1a2552; --side-active: #2a43c9; --side-line: #24305c;
   --side-chip: #ffffff2e; --side-chip-ink: #ffffff; --side-done: #2f8f5a; --side-warn: #f3c77a;
@@ -14,13 +14,13 @@
   --r: 12px;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0b1020; --surface: #131a2d; --surface-2: #19223a; --ink: #e5e9f5; --muted: #98a2bf; --line: #28334f;
+  --hint: #7fc8d2; --bg: #0b1020; --surface: #131a2d; --surface-2: #19223a; --ink: #e5e9f5; --muted: #98a2bf; --line: #28334f;
   --accent: #8399ff; --accent-ink: #0b1020; --accent-soft: #1e2856; --band: #2d3c82;
   --side: #080d1e; --side-ink: #e2e7fb; --side-muted: #7d88b6; --side-hover: #121a38; --side-active: #3049d0; --side-line: #1a2346;
   --crit: #f08a5d; --crit-soft: #3a2018; --warn: #e3b456; --warn-soft: #352a14; --ok: #5ad48a; --ok-soft: #14301f;
   color-scheme: dark; } }
 :root[data-theme="dark"] {
-  --bg: #0b1020; --surface: #131a2d; --surface-2: #19223a; --ink: #e5e9f5; --muted: #98a2bf; --line: #28334f;
+  --hint: #7fc8d2; --bg: #0b1020; --surface: #131a2d; --surface-2: #19223a; --ink: #e5e9f5; --muted: #98a2bf; --line: #28334f;
   --accent: #8399ff; --accent-ink: #0b1020; --accent-soft: #1e2856; --band: #2d3c82;
   --side: #080d1e; --side-ink: #e2e7fb; --side-muted: #7d88b6; --side-hover: #121a38; --side-active: #3049d0; --side-line: #1a2346;
   --crit: #f08a5d; --crit-soft: #3a2018; --warn: #e3b456; --warn-soft: #352a14; --ok: #5ad48a; --ok-soft: #14301f;
@@ -108,12 +108,14 @@ a { color: var(--accent); }
 .f input, .f select, td input, td select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: var(--surface-2); }
 .f input, .f select { height: 38px; }
 /* 아이폰 사파리: 날짜·월 칸이 자체 최소 폭·높이를 가져 칸 밖으로 튀어나옴 → 기본 모양을 끄고 다른 칸과 같은 크기로 */
-input[type="date"], input[type="month"] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; line-height: 1.2; text-align: left; }
-input[type="date"]::-webkit-date-and-time-value, input[type="month"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-height: 1.2em; }
+input[type="date"], input[type="month"] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; text-align: left; padding-top: 0 !important; padding-bottom: 0 !important; }
+.f input[type="date"], .f input[type="month"] { line-height: 36px; }
+td input[type="date"] { line-height: 30px; }
+input[type="date"]::-webkit-date-and-time-value, input[type="month"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-height: 1.2em; line-height: inherit; }
 input[type="date"]::-webkit-datetime-edit, input[type="month"]::-webkit-datetime-edit { padding: 0; }
 .f input:focus, .f select:focus, td input:focus, td select:focus { border-color: var(--accent); background: var(--surface); outline: none; }
 .f.missing input, .f.missing select { border-color: var(--crit); }
-.hint { font-size: 11.5px; color: var(--muted); min-height: 1.2em; }
+.hint { font-size: 11.5px; color: var(--hint); min-height: 1.2em; }
 .f.wide { grid-column: 1 / -1; }
 .check { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; cursor: pointer; }
 .check input { width: 16px; height: 16px; accent-color: var(--accent); }
@@ -223,7 +225,7 @@ td.n { text-align: right; white-space: nowrap; }
 .ord .nm span { font-size: 13px; overflow-wrap: anywhere; }
 .ord .nm small { color: var(--muted); font-size: 11.5px; }
 .ord .am { font-size: 13px; text-align: right; white-space: nowrap; }
-.ord.sb { background: var(--accent-soft); border-radius: 8px; padding-inline: 6px; border-bottom-color: transparent; }
+.ord.sb { background: var(--accent-soft); border-radius: 8px; margin-inline: -8px; padding-inline: 8px; border-bottom-color: transparent; }
 .ord.sb .nm span, .ord.sb .rk { color: var(--accent); }
 
 .tests tr:hover td { background: var(--surface-2); }
@@ -247,6 +249,7 @@ td.n { text-align: right; white-space: nowrap; }
 @media (max-width: 860px) {
   .f input, .f select, td input, td select, textarea, .filters input, #manualPrice { font-size: 16px; }
   .f input, .f select { height: 44px; }
+  .f input[type="date"], .f input[type="month"] { line-height: 42px; }
   .btn { padding: 9px 14px; }
   .btn.sm { padding: 7px 11px; }
 }
@@ -265,6 +268,8 @@ td.n { text-align: right; white-space: nowrap; }
   .drop .row-actions { width: 100%; }
   .drop .row-actions > * { flex: 1; text-align: center; }
   .modes { grid-template-columns: minmax(0, 1fr); }
+  /* 가정값: 선택 상자는 글이 길어 한 줄 전체로 (반쪽 칸에선 잘리고 오른쪽이 빔) */
+  #v-assume .f:has(select) { grid-column: 1 / -1; }
   .kpi b { font-size: 18px; }
   .pnums b { font-size: 15px; }
   .stepnav { position: sticky; bottom: 0; z-index: 3; background: var(--bg); margin: 0 -16px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); }
@@ -302,6 +307,7 @@ td.n { text-align: right; white-space: nowrap; }
   .ed .w-s { text-align: left; }
   .ed .w-s input[type="checkbox"] { width: 22px; height: 22px; margin: 6px 0 0; }
   .ed td input, .ed td select { height: 44px; }
+  .ed td input[type="date"] { line-height: 42px; }
   .ed td.w-del { position: absolute; top: 2px; right: 2px; }
   .ed td.w-del .x { font-size: 20px; padding: 2px 9px; line-height: 1.2; }
   .ed tr.rh { display: block; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; background: var(--surface); }
@@ -1128,6 +1134,16 @@ function ageFrom(approve, month) {
 }
 document.addEventListener("input", (e) => {
   const el = e.target;
+  // 금액 칸: 숫자만 넣는 중이면 바로 천 단위 쉼표 (커서 위치는 숫자 개수로 유지). '84.6억'처럼 단위를 쓰면 그대로 두고 칸을 나갈 때 정리
+  if (el.hasAttribute && el.hasAttribute("data-money") && /^[\d,]+$/.test(el.value)) {
+    const pos = el.selectionStart ?? el.value.length, digitsBefore = el.value.slice(0, pos).replace(/,/g, "").length;
+    const raw = el.value.replace(/,/g, "").replace(/^0+(?=\d)/, ""), out = raw.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    if (out !== el.value) {
+      el.value = out;
+      let k = 0, i = 0; while (i < out.length && k < digitsBefore) { if (out[i] !== ",") k++; i++; }
+      try { el.setSelectionRange(i, i); } catch (_) {}
+    }
+  }
   if (el.dataset.p) {
     const k = el.dataset.p;
     if (k === "name") state.name = el.value;
